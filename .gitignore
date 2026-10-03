@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.stocktrail/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+
+# Cache an old Vite process may recreate during migration
+.vite/

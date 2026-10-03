@@ -1,0 +1,22 @@
+{
+  "name": "stocktrail",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local Shopify inventory diagnostics CLI",
+  "type": "module",
+  "bin": { "stocktrail": "dist/apps/cli/src/index.js" },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "npm run build --silent && node dist/apps/cli/src/index.js",
+    "start": "node dist/apps/cli/src/index.js",
+    "test": "npm run build --silent && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.8",
+    "typescript": "^5.9.3"
+  }
+}
