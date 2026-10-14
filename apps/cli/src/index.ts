@@ -1,13 +1,18 @@
 #!/usr/bin/env node
+import { emitKeypressEvents } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { dataDirectory, initialize, readConfig } from '../../../packages/agent/src/config.js';
 import { scanDemo } from '../../../packages/agent/src/demo.js';
+import { connect, disconnect } from '../../../packages/agent/src/auth.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
 Usage: stocktrail <command> [options]
 
   init [--shop your-store.myshopify.com]  Create local configuration
+  connect                               Verify and securely store a Shopify token
+  login                                 Alias for connect
+  logout                                Delete the stored Shopify token
   doctor                                Check local setup (offline)
   scan --demo                           Run synthetic diagnostics and save evidence
 
@@ -15,7 +20,44 @@ Usage: stocktrail <command> [options]
   --version, -v                         Show version
 
 Data: .stocktrail in the current directory, or STOCKTRAIL_HOME.
+Tokens are stored in the operating system credential store, never config.json.
 Live Shopify scans are not implemented yet. No store changes are made.`;
+
+async function promptForToken(): Promise<string> {
+  const input = process.stdin;
+  const output = process.stdout;
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
+    throw new Error('Run stocktrail connect in an interactive terminal so the token can be entered securely.');
+  }
+
+  emitKeypressEvents(input);
+  const wasRaw = input.isRaw;
+  output.write('Shopify Admin API token: ');
+  input.setRawMode(true);
+  input.resume();
+
+  return new Promise<string>((resolve, reject) => {
+    let token = '';
+    const finish = (error?: Error) => {
+      input.off('keypress', onKeypress);
+      input.setRawMode(wasRaw);
+      if (!wasRaw) input.pause();
+      output.write('\n');
+      if (error) reject(error);
+      else resolve(token);
+    };
+    const onKeypress = (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean }) => {
+      if (key.ctrl && key.name === 'c') return finish(new Error('Login cancelled.'));
+      if (key.name === 'return' || key.name === 'enter') return finish();
+      if (key.name === 'backspace') {
+        token = token.slice(0, -1);
+        return;
+      }
+      if (!key.ctrl && !key.meta && text) token += text;
+    };
+    input.on('keypress', onKeypress);
+  });
+}
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -37,14 +79,36 @@ async function main() {
     case 'init':
       if (values.shop !== undefined && !values.shop.trim()) throw new Error('--shop cannot be empty.');
       console.log(`Created ${await initialize(directory, values.shop)}`);
-      console.log('Next: stocktrail doctor or stocktrail scan --demo');
+      console.log(values.shop
+        ? 'Next: stocktrail connect'
+        : 'Next: stocktrail doctor or stocktrail scan --demo');
       return;
+    case 'connect':
+    case 'login': {
+      const config = await readConfig(directory);
+      if (!config.shop) throw new Error('No shop is configured. Run stocktrail init --shop your-store.myshopify.com first.');
+      const token = await promptForToken();
+      console.log(`Verifying ${config.shop} with Shopify...`);
+      const connection = await connect(config.shop, token);
+      console.log(`Connected to ${connection.shopName} (${connection.shopDomain}).`);
+      console.log('Token saved in the operating system credential store.');
+      return;
+    }
+    case 'logout': {
+      const config = await readConfig(directory);
+      if (!config.shop) throw new Error('No shop is configured.');
+      const deleted = await disconnect(config.shop);
+      console.log(deleted
+        ? `Logged out of ${config.shop}; the stored token was deleted.`
+        : `No stored token was found for ${config.shop}.`);
+      return;
+    }
     case 'doctor': {
       const config = await readConfig(directory);
       console.log(`OK Node ${process.versions.node}`);
       console.log(`OK Configuration: ${directory}`);
       console.log(config.shop ? `OK Shop: ${config.shop}` : 'INFO Shop is not configured; demo mode is available.');
-      console.log('INFO Offline setup check only. Live Shopify collection and credential storage are not implemented.');
+      console.log('INFO Offline setup check only. Use stocktrail connect to verify and store a Shopify token.');
       return;
     }
     case 'scan': {

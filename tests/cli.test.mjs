@@ -14,12 +14,17 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
   });
   try {
     assert.equal(run('--help').status, 0);
+    assert.match(run('--help').stdout, /connect/);
     assert.equal(run('doctor').status, 1);
     assert.equal(run('init', '--shop', 'https://bad.example').status, 1);
     assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);
     assert.equal(run('init', '--shop', 'replacement.myshopify.com').status, 1);
     assert.equal(JSON.parse(await readFile(join(data, 'config.json'), 'utf8')).shop, 'example.myshopify.com');
     assert.equal(run('doctor').status, 0);
+    assert.match(run('doctor').stdout, /stocktrail connect/);
+    const nonInteractiveConnect = run('connect');
+    assert.equal(nonInteractiveConnect.status, 1);
+    assert.match(nonInteractiveConnect.stderr, /interactive terminal/);
     assert.equal(run('scan').status, 1);
     assert.equal(run('scan', '--demo').status, 2);
     const [file] = await readdir(join(data, 'reports'));

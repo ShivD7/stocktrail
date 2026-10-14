@@ -4,9 +4,16 @@
   "private": true,
   "description": "Local Shopify inventory diagnostics CLI",
   "type": "module",
-  "bin": { "stocktrail": "dist/apps/cli/src/index.js" },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=22.12" },
+  "bin": {
+    "stocktrail": "dist/apps/cli/src/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -18,5 +25,8 @@
   "devDependencies": {
     "@types/node": "^22.18.8",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^2.1.1"
   }
 }
