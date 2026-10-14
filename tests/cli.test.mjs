@@ -16,6 +16,11 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);
     assert.equal(run('doctor').status, 1);
+    assert.match(run('import').stderr, /requires --preview/);
+    assert.match(run('import', '--preview', '--limit', '0').stderr, /whole number from 1 to 250/);
+    assert.match(run('import', '--preview', '--limit', 'five').stderr, /whole number from 1 to 250/);
+    assert.match(run('doctor', '--preview').stderr, /only supported with import/);
+    assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
     assert.equal(run('init', '--shop', 'https://bad.example').status, 1);
     assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);
     assert.equal(run('init', '--shop', 'replacement.myshopify.com').status, 1);

@@ -1,18 +1,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { normalizeShop } from '../../shared/src/shop.js';
+
+export { normalizeShop } from '../../shared/src/shop.js';
 
 export type Config = { version: 1; shop: string | null };
 
 export function dataDirectory(): string {
   return resolve(process.env.STOCKTRAIL_HOME || join(process.cwd(), '.stocktrail'));
-}
-
-export function normalizeShop(input: string): string {
-  const shop = input.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
-    throw new Error('Use a store hostname such as your-store.myshopify.com (no URL or path).');
-  }
-  return shop;
 }
 
 export async function initialize(directory: string, shop?: string): Promise<string> {

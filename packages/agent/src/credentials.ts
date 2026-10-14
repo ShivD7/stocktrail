@@ -1,5 +1,5 @@
 import { AsyncEntry, type EntryOptions } from '@napi-rs/keyring';
-import { normalizeShop } from './config.js';
+import { normalizeShop } from '../../shared/src/shop.js';
 
 export const CREDENTIAL_SERVICE = 'StockTrail Shopify Admin';
 

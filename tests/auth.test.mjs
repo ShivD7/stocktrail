@@ -4,9 +4,9 @@ import { connect, disconnect, readStoredToken } from '../dist/packages/agent/src
 import { verifyShopifyToken } from '../dist/packages/shopify/src/admin.js';
 
 const shop = 'example.myshopify.com';
-const token = 'shpat_test_secret';
+const token = 'synthetic-credential';
 
-function successfulFetch(scopes = ['read_products', 'read_inventory'], domain = shop) {
+function successfulFetch(scopes = ['read_products'], domain = shop) {
   return async (url, options) => {
     assert.equal(url, `https://${shop}/admin/api/2026-10/graphql.json`);
     assert.equal(options.method, 'POST');
@@ -36,7 +36,7 @@ test('verifies a token against the configured shop and required scopes', async (
   assert.deepEqual(connection, {
     shopName: 'Example Shop',
     shopDomain: shop,
-    grantedScopes: ['read_products', 'read_inventory'],
+    grantedScopes: ['read_products'],
   });
 });
 
@@ -44,7 +44,7 @@ test('write scopes satisfy the corresponding read requirement', async () => {
   await assert.doesNotReject(() => verifyShopifyToken(
     shop,
     token,
-    successfulFetch(['write_products', 'write_inventory']),
+    successfulFetch(['write_products']),
   ));
 });
 
@@ -58,8 +58,8 @@ test('rejects invalid, wrong-store, and under-scoped tokens', async () => {
     /belongs to other\.myshopify\.com/,
   );
   await assert.rejects(
-    () => verifyShopifyToken(shop, token, successfulFetch(['read_products'])),
-    /read_inventory/,
+    () => verifyShopifyToken(shop, token, successfulFetch([])),
+    /read_products/,
   );
 });
 

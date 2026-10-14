@@ -12,6 +12,7 @@ npm run dev -- --help
 npm run dev -- init --shop your-store.myshopify.com
 npm run dev -- connect
 npm run dev -- doctor
+npm run dev -- import --preview --limit 5
 npm run dev -- scan --demo
 ```
 
@@ -19,7 +20,9 @@ The demo uses two synthetic products, prints one FAIL and one PASS, and saves a 
 
 Configuration is created once in `.stocktrail/config.json` under the current directory. Repeating `init` never overwrites it. Omit `--shop` to try the offline demo. Set `$env:STOCKTRAIL_HOME` to an absolute directory if you want one data location across working directories. Configuration and evidence are ignored by Git. Do not put tokens in config.json.
 
-`connect` (also available as `login`) prompts for a Shopify Admin API token without displaying it, verifies the store identity and the `read_products` and `read_inventory` scopes against Shopify Admin GraphQL API version `2026-10`, and only then saves the token. StockTrail uses Windows Credential Manager, macOS Keychain, or a Linux Secret Service provider. On Linux, the desktop keyring must be installed, running, and unlocked. The token is keyed by the configured `*.myshopify.com` hostname and is never written to `config.json` or diagnostic output.
+`connect` (also available as `login`) prompts for a Shopify Admin API token without displaying it, verifies the store identity and the `read_products` scope against Shopify Admin GraphQL API version `2026-10`, and only then saves the token. StockTrail uses Windows Credential Manager, macOS Keychain, or a Linux Secret Service provider. On Linux, the desktop keyring must be installed, running, and unlocked. The token is keyed by the configured `*.myshopify.com` hostname and is never written to `config.json` or diagnostic output.
+
+`import --preview` reads products and all variants through Admin GraphQL, normalizes them in memory, and prints aggregate counts only. It does not write database, catalog, report, or evidence files and never sends a Shopify mutation. `--limit` defaults to 5 and accepts whole numbers from 1 to 250. Running `import` without `--preview` is rejected because persistent import is not implemented.
 
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Live inventory collection is still a later step; this connection is now ready for the Shopify adapter to retrieve with `readStoredToken`.
 
@@ -37,7 +40,9 @@ After editing TypeScript, rebuild or use `npm run dev -- <command>`. `npm start 
 ## Layout
 
 - `apps/cli/src`: commands and terminal output.
-- `packages/agent/src`: local configuration and demo scan orchestration.
+- `packages/agent/src`: local configuration, credentials, and workflow orchestration.
+- `packages/shopify/src`: read-only Shopify Admin adapters and catalog collection.
+- `packages/shared/src`: shared domain validation and normalized catalog types.
 - `packages/detector/src`: pure availability comparison with explicit inconclusive results.
 - `tests`: rule cases and CLI integration checks.
 - `docs/execution-plan.md`: original product roadmap, not a description of completed features.
@@ -54,10 +59,9 @@ npm run build
 
 ## Next implementation work
 
-1. Add read-only product and inventory collectors under `packages/shopify`, using the verified credential through `readStoredToken`.
-2. Use the verified stored token in the read-only Shopify product and inventory collector.
-3. Collect Admin inventory, storefront availability, and JSON-LD with matching variant IDs, timestamps, publication/market context, and raw evidence.
-4. Persist incidents and regression assertions. Add polling and a localhost dashboard only when needed.
+1. Add storefront availability and JSON-LD collection with matching variant IDs, timestamps, and market context.
+2. Persist catalog snapshots, incidents, and regression assertions only after a separate persistent-import design is approved.
+3. Add polling and a localhost dashboard only when needed.
 
 `scan` without `--demo` deliberately reports that live collection is unimplemented. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.
 
