@@ -22,6 +22,12 @@ test('preview uses injected boundaries, returns safe aggregates, and writes no f
     async readCatalog(shop, token, limit) {
       calls.push(['catalog', shop, token, limit]);
       return {
+        complete: true,
+        provenance: {
+          observedAt: '2026-10-15T12:00:00.000Z',
+          evidenceSource: 'shopify_admin_graphql',
+          apiVersion: '2026-10',
+        },
         products: [
           { title: privateTitle, publishedToOnlineStore: true, variants: [{}, {}] },
           { title: 'Another synthetic title', publishedToOnlineStore: false, variants: [{}] },

@@ -1,12 +1,15 @@
 import { z } from 'zod';
 import {
+  catalogProvenanceSchema,
   catalogProductSchema,
+  type CatalogProvenance,
   type CatalogProduct,
   type CatalogVariant,
 } from '../../shared/src/catalog.js';
 import {
   ShopifyAdminClient,
   ShopifyResponseError,
+  SHOPIFY_API_VERSION,
   type ShopifyRequestMetadata,
 } from './admin-client.js';
 
@@ -26,6 +29,7 @@ const variantSchema = z.object({
   selectedOptions: z.array(z.object({ name: z.string(), value: z.string() })),
   inventoryPolicy: z.enum(['DENY', 'CONTINUE']),
   inventoryQuantity: z.number().int().nullable(),
+  sellableOnlineQuantity: z.number().int(),
   updatedAt: z.string(),
   inventoryItem: z.object({ tracked: z.boolean() }),
 });
@@ -41,7 +45,7 @@ const productSchema = z.object({
   descriptionHtml: z.string(),
   seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }),
   handle: z.string(),
-  status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT']),
+  status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED']),
   updatedAt: z.string(),
   onlineStoreUrl: z.string().nullable(),
   variants: variantConnectionSchema,
@@ -80,6 +84,7 @@ const productPageQuery = `#graphql
             selectedOptions { name value }
             inventoryPolicy
             inventoryQuantity
+            sellableOnlineQuantity
             updatedAt
             inventoryItem { tracked }
           }
@@ -102,6 +107,7 @@ const variantPageQuery = `#graphql
           selectedOptions { name value }
           inventoryPolicy
           inventoryQuantity
+          sellableOnlineQuantity
           updatedAt
           inventoryItem { tracked }
         }
@@ -114,6 +120,8 @@ const variantPageQuery = `#graphql
 export type CatalogReadResult = {
   products: CatalogProduct[];
   requestMetadata: ShopifyRequestMetadata[];
+  complete: boolean;
+  provenance: CatalogProvenance;
 };
 
 function malformedCatalogResponse(): Error {
@@ -172,7 +180,11 @@ async function readAllVariants(
   return variants;
 }
 
-export async function readCatalogPreview(client: ShopifyAdminClient, limit: number): Promise<CatalogReadResult> {
+export async function readCatalogPreview(
+  client: ShopifyAdminClient,
+  limit: number,
+  now: () => Date = () => new Date(),
+): Promise<CatalogReadResult> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 250) {
     throw new Error('Preview limit must be a whole number from 1 to 250.');
   }
@@ -208,5 +220,10 @@ export async function readCatalogPreview(client: ShopifyAdminClient, limit: numb
     if (hasNextPage && after === null) throw malformedCatalogResponse();
   }
 
-  return { products, requestMetadata };
+  const provenance = catalogProvenanceSchema.parse({
+    observedAt: now().toISOString(),
+    evidenceSource: 'shopify_admin_graphql',
+    apiVersion: SHOPIFY_API_VERSION,
+  });
+  return { products, requestMetadata, complete: !hasNextPage, provenance };
 }

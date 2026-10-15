@@ -21,6 +21,7 @@ function variant(id, overrides = {}) {
     selectedOptions: [{ name: 'Size', value: 'One' }],
     inventoryPolicy: 'DENY',
     inventoryQuantity: 4,
+    sellableOnlineQuantity: 3,
     updatedAt: '2026-10-01T00:00:00Z',
     inventoryItem: { tracked: true },
     ...overrides,
@@ -50,16 +51,21 @@ function response(data, headers = {}) {
 
 test('paginates products synchronously and separately completes each product variants', async () => {
   const calls = [];
+  const events = [];
   const pages = [
     response({ products: {
       nodes: [product('1', {
-        nodes: [variant('90071992547409931234', { sku: null, inventoryQuantity: null })],
+        nodes: [variant('90071992547409931234', {
+          sku: null,
+          inventoryQuantity: null,
+          sellableOnlineQuantity: 0,
+        })],
         pageInfo: { hasNextPage: true, endCursor: 'variant-cursor-1' },
       }, { seo: { title: null, description: null }, onlineStoreUrl: null })],
       pageInfo: { hasNextPage: true, endCursor: 'product-cursor-1' },
     } }),
     response({ product: { variants: {
-      nodes: [variant('2')],
+      nodes: [variant('2', { sellableOnlineQuantity: -2 })],
       pageInfo: { hasNextPage: false, endCursor: 'variant-cursor-2' },
     } } }),
     response({ products: {
@@ -71,13 +77,21 @@ test('paginates products synchronously and separately completes each product var
     } }),
   ];
   const fetcher = async (_url, options) => {
+    events.push('fetch');
     const request = JSON.parse(options.body);
     assert.doesNotMatch(request.query, /\bmutation\b/i);
     calls.push(request);
     return pages.shift();
   };
 
-  const result = await readCatalogPreview(new ShopifyAdminClient(shop, credential, fetcher), 2);
+  const result = await readCatalogPreview(
+    new ShopifyAdminClient(shop, credential, fetcher),
+    2,
+    () => {
+      events.push('clock');
+      return new Date('2026-10-15T12:34:56.789Z');
+    },
+  );
 
   assert.equal(pages.length, 0);
   assert.equal(calls.length, 3);
@@ -86,10 +100,13 @@ test('paginates products synchronously and separately completes each product var
   assert.equal(calls[1].variables.after, 'variant-cursor-1');
   assert.equal(calls[2].variables.after, 'product-cursor-1');
   assert.equal(result.products.length, 2);
+  assert.equal(result.complete, true);
   assert.equal(result.products[0].variants.length, 2);
   assert.equal(result.products[0].variants[0].legacyResourceId, '90071992547409931234');
   assert.equal(result.products[0].variants[0].sku, null);
   assert.equal(result.products[0].variants[0].inventoryQuantity, null);
+  assert.equal(result.products[0].variants[0].sellableOnlineQuantity, 0);
+  assert.equal(result.products[0].variants[1].sellableOnlineQuantity, -2);
   assert.deepEqual(result.products[0].seo, { title: null, description: null });
   assert.equal(result.products[0].publishedToOnlineStore, false);
   assert.equal(result.products[0].status, 'ACTIVE');
@@ -97,6 +114,46 @@ test('paginates products synchronously and separately completes each product var
   assert.equal(result.requestMetadata[0].requestId, 'synthetic-request');
   assert.equal(result.requestMetadata[0].apiVersion, '2026-10');
   assert.deepEqual(result.requestMetadata[0].cost, { requestedQueryCost: 3 });
+  assert.deepEqual(result.provenance, {
+    observedAt: '2026-10-15T12:34:56.789Z',
+    evidenceSource: 'shopify_admin_graphql',
+    apiVersion: '2026-10',
+  });
+  assert.equal(events.at(-1), 'clock');
+  assert.match(calls[0].query, /sellableOnlineQuantity/);
+  assert.match(calls[1].query, /sellableOnlineQuantity/);
+});
+
+test('labels a bounded read as incomplete without fetching beyond its limit', async () => {
+  let requests = 0;
+  const client = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    return response({ products: {
+      nodes: [product('bounded', {
+        nodes: [variant('401')],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      })],
+      pageInfo: { hasNextPage: true, endCursor: 'another-page' },
+    } });
+  });
+  const result = await readCatalogPreview(client, 1);
+  assert.equal(requests, 1);
+  assert.equal(result.complete, false);
+});
+
+test('normalizes Shopify UNLISTED products without rejecting the catalog page', async () => {
+  const client = new ShopifyAdminClient(shop, credential, async () => response({
+    products: {
+      nodes: [product('unlisted', {
+        nodes: [variant('402')],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      }, { status: 'UNLISTED' })],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  }));
+  const result = await readCatalogPreview(client, 1);
+  assert.equal(result.products[0].status, 'UNLISTED');
+  assert.equal(result.complete, true);
 });
 
 test('rejects numeric legacy IDs instead of losing precision', async () => {

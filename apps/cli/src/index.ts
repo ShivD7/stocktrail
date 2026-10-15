@@ -4,8 +4,9 @@ import { parseArgs } from 'node:util';
 import { dataDirectory, initialize, readConfig } from '../../../packages/agent/src/config.js';
 import { scanDemo } from '../../../packages/agent/src/demo.js';
 import { connect, disconnect } from '../../../packages/agent/src/auth.js';
-import { previewCatalogImport } from '../../../packages/agent/src/import.js';
-import { formatImportPreview } from './import-output.js';
+import { persistCatalogImport, previewCatalogImport } from '../../../packages/agent/src/import.js';
+import { listMonitoringCandidates, updateMonitoringSelection } from '../../../packages/agent/src/monitoring.js';
+import { formatImportPreview, formatPersistentImport } from './import-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -17,7 +18,12 @@ Usage: stocktrail <command> [options]
   logout                                Delete the stored Shopify token
   doctor                                Check local setup (offline)
   scan --demo                           Run synthetic diagnostics and save evidence
+  import [--limit 250]                  Import products into the local database
   import --preview [--limit 5]          Read and summarize products without saving them
+  monitor list                          Show aggregate monitoring selection status
+  monitor candidates                    List active local product GIDs without catalog content
+  monitor add --product-id <gid>        Monitor an imported product (maximum 10)
+  monitor remove --product-id <gid>     Stop monitoring an imported product
 
   --help, -h                            Show help
   --version, -v                         Show version
@@ -25,6 +31,7 @@ Usage: stocktrail <command> [options]
 Data: .stocktrail in the current directory, or STOCKTRAIL_HOME.
 Tokens are stored in the operating system credential store, never config.json.
 Import preview is read-only and writes no catalog or evidence files.
+Persistent import writes only to the local StockTrail database and never modifies Shopify.
 Live Shopify scans are not implemented yet. No store changes are made.`;
 
 async function promptForToken(): Promise<string> {
@@ -70,16 +77,18 @@ async function main() {
       help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
       shop: { type: 'string' }, demo: { type: 'boolean' },
       preview: { type: 'boolean' }, limit: { type: 'string' },
+      'product-id': { type: 'string' },
     },
   });
   if (values.help) { console.log(help); return; }
   if (values.version) { console.log('0.0.0'); return; }
   const [command, ...extra] = positionals;
-  if (extra.length) throw new Error('Unexpected arguments. Use --help for usage.');
+  if (extra.length && command !== 'monitor') throw new Error('Unexpected arguments. Use --help for usage.');
   if (values.shop !== undefined && command !== 'init') throw new Error('--shop is only supported with init.');
   if (values.demo !== undefined && command !== 'scan') throw new Error('--demo is only supported with scan.');
   if (values.preview !== undefined && command !== 'import') throw new Error('--preview is only supported with import.');
   if (values.limit !== undefined && command !== 'import') throw new Error('--limit is only supported with import.');
+  if (values['product-id'] !== undefined && command !== 'monitor') throw new Error('--product-id is only supported with monitor.');
   const directory = dataDirectory();
   switch (command) {
     case undefined: console.log(help); return;
@@ -131,15 +140,53 @@ async function main() {
       return;
     }
     case 'import': {
-      if (!values.preview) throw new Error('Import requires --preview; persistent catalog import is not implemented.');
-      const rawLimit = values.limit ?? '5';
-      if (!/^\d+$/.test(rawLimit)) throw new Error('Preview limit must be a whole number from 1 to 250.');
+      const rawLimit = values.limit ?? (values.preview ? '5' : '250');
+      const label = values.preview ? 'Preview limit' : 'Import limit';
+      if (!/^\d+$/.test(rawLimit)) throw new Error(`${label} must be a whole number from 1 to 250.`);
       const limit = Number(rawLimit);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 250) {
-        throw new Error('Preview limit must be a whole number from 1 to 250.');
+        throw new Error(`${label} must be a whole number from 1 to 250.`);
       }
-      const summary = await previewCatalogImport(directory, limit);
-      for (const line of formatImportPreview(summary)) console.log(line);
+      if (values.preview) {
+        const summary = await previewCatalogImport(directory, limit);
+        for (const line of formatImportPreview(summary)) console.log(line);
+      } else {
+        const summary = await persistCatalogImport(directory, limit);
+        for (const line of formatPersistentImport(summary)) console.log(line);
+      }
+      return;
+    }
+    case 'monitor': {
+      if (values.preview !== undefined || values.limit !== undefined) {
+        throw new Error('Import options are not supported with monitor.');
+      }
+      const [action] = extra;
+      if (extra.length !== 1 || !['add', 'remove', 'list', 'candidates'].includes(action ?? '')) {
+        throw new Error('Use monitor list, monitor candidates, monitor add --product-id <gid>, or monitor remove --product-id <gid>.');
+      }
+      if ((action === 'list' || action === 'candidates') && values['product-id'] !== undefined) {
+        throw new Error('--product-id is only supported with monitor add or monitor remove.');
+      }
+      if (action === 'candidates') {
+        const candidates = await listMonitoringCandidates(directory);
+        if (candidates.length === 0) console.log('No active imported products. Run stocktrail import first.');
+        for (const candidate of candidates) {
+          const state = candidate.present
+            ? (candidate.monitored ? 'monitored' : 'available')
+            : 'monitored inactive';
+          console.log(`[${state}] ${candidate.productGid}`);
+        }
+        return;
+      }
+      const summary = await updateMonitoringSelection(
+        directory,
+        action as 'add' | 'remove' | 'list',
+        values['product-id'],
+      );
+      console.log(`Monitored products: ${summary.monitoredProductCount}/${summary.limit}.`);
+      if (summary.activeMonitoredProductCount !== summary.monitoredProductCount) {
+        console.log(`Active monitored products: ${summary.activeMonitoredProductCount}.`);
+      }
       return;
     }
     default: throw new Error(`Unknown command: ${command}. Use --help for usage.`);
