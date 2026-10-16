@@ -7,7 +7,9 @@ import {
   buildPinnedRequestOptions,
   createPinnedLookup,
   deriveAjaxProductTarget,
+  deriveHtmlProductTarget,
   fetchAjaxProduct,
+  fetchHtmlProduct,
   InvalidAjaxProductUrlError,
   isPublicNetworkAddress,
   normalizeAjaxProduct,
@@ -38,6 +40,7 @@ test('derives the Ajax URL while preserving a safe locale prefix', () => {
   assert.equal(target.handle, 'synthetic-handle');
   assert.equal(target.localePath, '/en-ca');
   assert.equal(deriveAjaxProductTarget('https://store.example/products/item').localePath, null);
+  assert.equal(deriveHtmlProductTarget(validUrl).url.href, validUrl);
 
   for (const value of [
     'http://store.example/products/item',
@@ -356,6 +359,25 @@ test('bounds and validates compressed response bodies', async () => {
   assert.equal(result.reasonCode, 'body_decode_failed');
   result = await request({ body: gzipSync(new Uint8Array(5 * 1024 * 1024 + 1)), contentEncoding: 'gzip' });
   assert.equal(result.reasonCode, 'body_too_large');
+});
+
+test('HTML collection inherits pinned transport and enforces 200 text/html with a compatible charset', async () => {
+  const target = deriveHtmlProductTarget(validUrl);
+  const request = async response => fetchHtmlProduct(target, {
+    async resolve() { return [{ address: '8.8.8.8', family: 4 }]; },
+    async request(_target, address) {
+      assert.deepEqual(address, { address: '8.8.8.8', family: 4 });
+      return rawResponse(response);
+    },
+  });
+  let result = await request({ status: 200, contentType: 'text/html; charset=UTF-8', body: bytes('<html></html>') });
+  assert.equal(result.reasonCode, null);
+  result = await request({ status: 201, contentType: 'text/html' });
+  assert.equal(result.reasonCode, 'http_status');
+  result = await request({ status: 200, contentType: 'application/xhtml+xml' });
+  assert.equal(result.reasonCode, 'non_html_content_type');
+  result = await request({ status: 200, contentType: 'text/html; charset=iso-8859-1' });
+  assert.equal(result.reasonCode, 'unsupported_charset');
 });
 
 test('parses UnsignedInt64 identities losslessly and ignores undocumented inventory fields', () => {

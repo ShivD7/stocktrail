@@ -30,6 +30,28 @@ export type MonitoringCandidate = {
   present: boolean;
 };
 
+export type EvidenceRunMetadata = {
+  runId: string;
+  status: 'complete' | 'partial';
+  startedAt: string;
+  completedAt: string;
+  sources: Array<{
+    source: 'admin' | 'ajax' | 'html' | 'jsonld';
+    outcome: 'observed' | 'inconclusive';
+    reasonCode: string | null;
+    status: number | null;
+    contentType: string | null;
+    itemCount: number;
+  }>;
+  artifacts: Array<{
+    source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'bundle';
+    relativePath: string;
+    mediaType: string;
+    sha256: string;
+    bytes: number;
+  }>;
+};
+
 type Migration = string | ((database: DatabaseSync) => void);
 
 function addColumnIfMissing(
@@ -222,6 +244,41 @@ const migrations: Migration[] = [
     );
     addColumnIfMissing(database, 'variants', 'sellable_online_quantity', 'INTEGER');
   },
+  `
+    CREATE TABLE IF NOT EXISTS evidence_runs (
+      id TEXT PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      collection_status TEXT NOT NULL CHECK (collection_status IN ('complete', 'partial')),
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      source_count INTEGER NOT NULL,
+      observed_source_count INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS evidence_sources (
+      run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('admin', 'ajax', 'html', 'jsonld')),
+      outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'inconclusive')),
+      reason_code TEXT,
+      http_status INTEGER,
+      content_type TEXT,
+      item_count INTEGER NOT NULL,
+      PRIMARY KEY (run_id, source)
+    );
+
+    CREATE TABLE IF NOT EXISTS evidence_artifacts (
+      run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('admin', 'ajax', 'html', 'jsonld', 'bundle')),
+      relative_path TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      PRIMARY KEY (run_id, relative_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS evidence_runs_product_created ON evidence_runs(product_id, created_at);
+  `,
 ];
 
 function count(statement: StatementSync, ...values: SQLInputValue[]): number {
@@ -470,6 +527,50 @@ export class CatalogRepository {
           WHERE shops.domain = ?) AS imports
     `).get(shop, shop, shop) as { products: number; variants: number; imports: number };
     return { products: Number(row.products), variants: Number(row.variants), imports: Number(row.imports) };
+  }
+
+  recordEvidenceRun(shop: string, productGid: string, metadata: EvidenceRunMetadata): void {
+    this.validateProductGid(productGid);
+    this.transaction(() => {
+      const product = this.database.prepare(`
+        SELECT products.id AS product_id
+        FROM products JOIN shops ON shops.id = products.shop_id
+        WHERE shops.domain = ? AND products.shopify_gid = ?
+      `).get(shop, productGid) as { product_id: number } | undefined;
+      if (!product) throw new Error('Cannot index evidence for an unknown product.');
+      const observed = metadata.sources.filter(source => source.outcome === 'observed').length;
+      this.database.prepare(`
+        INSERT INTO evidence_runs (
+          id, product_id, collection_status, started_at, completed_at,
+          source_count, observed_source_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        metadata.runId, product.product_id, metadata.status, metadata.startedAt,
+        metadata.completedAt, metadata.sources.length, observed,
+      );
+      const insertSource = this.database.prepare(`
+        INSERT INTO evidence_sources (
+          run_id, source, outcome, reason_code, http_status, content_type, item_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const source of metadata.sources) {
+        insertSource.run(
+          metadata.runId, source.source, source.outcome, source.reasonCode,
+          source.status, source.contentType, source.itemCount,
+        );
+      }
+      const insertArtifact = this.database.prepare(`
+        INSERT INTO evidence_artifacts (
+          run_id, source, relative_path, media_type, sha256, bytes
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const artifact of metadata.artifacts) {
+        insertArtifact.run(
+          metadata.runId, artifact.source, artifact.relativePath, artifact.mediaType,
+          artifact.sha256, artifact.bytes,
+        );
+      }
+    });
   }
 
   private monitoringSummaryByShopId(shopId: number): MonitoringSummary {

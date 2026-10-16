@@ -59,7 +59,7 @@ export type AjaxTransportDependencies = {
 
 export class InvalidAjaxProductUrlError extends Error {}
 
-export function deriveAjaxProductTarget(onlineStoreUrl: string): DerivedAjaxTarget {
+function deriveProductTarget(onlineStoreUrl: string): DerivedAjaxTarget {
   let url: URL;
   try {
     url = new URL(onlineStoreUrl);
@@ -91,12 +91,21 @@ export function deriveAjaxProductTarget(onlineStoreUrl: string): DerivedAjaxTarg
     throw new InvalidAjaxProductUrlError('The Admin online store URL is not safe for Ajax observation.');
   }
   const prefix = segments.slice(0, productIndex);
-  url.pathname = `${url.pathname}.js`;
   return {
     url,
     handle,
     localePath: prefix.length === 0 ? null : `/${prefix.join('/')}`,
   };
+}
+
+export function deriveHtmlProductTarget(onlineStoreUrl: string): DerivedAjaxTarget {
+  return deriveProductTarget(onlineStoreUrl);
+}
+
+export function deriveAjaxProductTarget(onlineStoreUrl: string): DerivedAjaxTarget {
+  const target = deriveProductTarget(onlineStoreUrl);
+  target.url.pathname = `${target.url.pathname}.js`;
+  return target;
 }
 
 function ipv4Number(address: string): number | null {
@@ -356,9 +365,10 @@ function waitForObservation<T>(operation: Promise<T>, signal: AbortSignal): Prom
   });
 }
 
-export async function fetchAjaxProduct(
+async function fetchPublicProduct(
   target: DerivedAjaxTarget,
-  dependencies: AjaxTransportDependencies = defaultDependencies,
+  expected: 'json' | 'html',
+  dependencies: AjaxTransportDependencies,
 ): Promise<AjaxFetchResult> {
   const now = dependencies.now ?? Date.now;
   const timeoutMs = dependencies.observationTimeoutMs ?? OBSERVATION_TIMEOUT_MS;
@@ -419,11 +429,21 @@ export async function fetchAjaxProduct(
       return { ...emptyFetchResult('http_unauthorized'), status, contentType };
     }
     if (status === 404) return { ...emptyFetchResult('http_not_found'), status: 404, contentType };
-    if (status < 200 || status >= 300) {
+    if ((expected === 'html' && status !== 200) || status < 200 || status >= 300) {
       return { ...emptyFetchResult('http_status'), status, contentType };
     }
-    if (contentType === null || !(contentType === 'application/json' || contentType.endsWith('+json'))) {
+    if (expected === 'json' &&
+        (contentType === null || !(contentType === 'application/json' || contentType.endsWith('+json')))) {
       return { ...emptyFetchResult('non_json_content_type'), status, contentType };
+    }
+    if (expected === 'html' && contentType !== 'text/html') {
+      return { ...emptyFetchResult('non_html_content_type'), status, contentType };
+    }
+    if (expected === 'html') {
+      const charset = response.contentType?.match(/(?:^|;)\s*charset\s*=\s*["']?([^;"'\s]+)/i)?.[1]?.toLowerCase();
+      if (charset !== undefined && !['utf-8', 'utf8', 'us-ascii', 'ascii'].includes(charset)) {
+        return { ...emptyFetchResult('unsupported_charset'), status, contentType };
+      }
     }
     const decoded = decodeBody(response.body, response.contentEncoding);
     if (expired()) return emptyFetchResult('timeout');
@@ -444,6 +464,28 @@ export async function fetchAjaxProduct(
     };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export function fetchAjaxProduct(
+  target: DerivedAjaxTarget,
+  dependencies: AjaxTransportDependencies = defaultDependencies,
+): Promise<AjaxFetchResult> {
+  return fetchPublicProduct(target, 'json', dependencies);
+}
+
+export function fetchHtmlProduct(
+  target: DerivedAjaxTarget,
+  dependencies: AjaxTransportDependencies = defaultDependencies,
+): Promise<AjaxFetchResult> {
+  return fetchPublicProduct(target, 'html', dependencies);
+}
+
+export function decodeHtmlBody(body: Uint8Array): string | null {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch {
+    return null;
   }
 }
 

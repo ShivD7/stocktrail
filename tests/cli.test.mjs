@@ -17,7 +17,12 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);
     assert.equal(run('doctor').status, 1);
-    assert.match(run('scan').stderr, /Full live storefront scans are not implemented/);
+    assert.match(run('scan').stderr, /--product-id is required for a combined scan/);
+    assert.match(run('scan', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
+    assert.match(
+      run('scan', '--product-id', 'gid://shopify/Product/1').stderr,
+      /No local configuration/,
+    );
     assert.match(run('scan', '--admin').stderr, /--product-id is required/);
     assert.match(run('scan', '--admin', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
     assert.match(
@@ -34,7 +39,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('scan', '--admin', '--ajax').stderr, /exactly one of scan --demo, scan --admin, or scan --ajax/);
     assert.match(
       run('scan', '--demo', '--product-id', 'gid://shopify/Product/1').stderr,
-      /only supported with scan --admin or scan --ajax/,
+      /cannot be combined with scan --demo/,
     );
     assert.match(run('doctor', '--admin').stderr, /only supported with scan/);
     assert.match(run('doctor', '--ajax').stderr, /only supported with scan/);
@@ -45,7 +50,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
     assert.match(
       run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
-      /only supported with monitor, scan --admin, or scan --ajax/,
+      /only supported with monitor or scan/,
     );
     assert.equal(run('init', '--shop', 'https://bad.example').status, 1);
     assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);

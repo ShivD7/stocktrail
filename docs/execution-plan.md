@@ -344,6 +344,8 @@ Use six build sessions each week and keep one evening as recovery or catch-up. E
 
 ### Week 2 — October 10–16: collect all three perspectives
 
+Current implementation note: the combined `scan --product-id <gid>` command now collects and atomically persists Admin, cookieless Ajax, HTML, and inline JSON-LD evidence. It reports source outcomes only. The contradiction rules, incidents, scoring, regression assertions, rendered-browser actions, and remediation described in later weeks remain intentionally deferred.
+
 - Add Admin inventory and selling-policy collection.
 - Add Ajax product collection.
 - Fetch product HTML and parse JSON-LD.

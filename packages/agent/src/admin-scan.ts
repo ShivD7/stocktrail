@@ -115,7 +115,7 @@ if ($isDirectory) {
 }
 `;
 
-async function hardenWindowsAcl(path: string, target: 'directory' | 'file'): Promise<void> {
+export async function hardenWindowsAcl(path: string, target: 'directory' | 'file'): Promise<void> {
   await execFileAsync(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', windowsAclScript],

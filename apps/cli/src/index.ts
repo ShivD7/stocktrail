@@ -11,6 +11,8 @@ import { scanAdminEvidence } from '../../../packages/agent/src/admin-scan.js';
 import { formatAdminScan } from './scan-output.js';
 import { scanAjaxEvidence } from '../../../packages/agent/src/ajax-scan.js';
 import { formatAjaxScan } from './ajax-output.js';
+import { scanEvidenceBundle } from '../../../packages/agent/src/combined-scan.js';
+import { formatEvidenceBundle } from './bundle-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -24,6 +26,7 @@ Usage: stocktrail <command> [options]
   scan --demo                           Run synthetic diagnostics and save evidence
   scan --admin --product-id <gid>       Save Admin-only evidence for a monitored product
   scan --ajax --product-id <gid>        Save cookieless Ajax evidence for a monitored product
+  scan --product-id <gid>               Save combined Admin, storefront, and JSON-LD evidence
   import [--limit 250]                  Import products into the local database
   import --preview [--limit 5]          Read and summarize products without saving them
   monitor list                          Show aggregate monitoring selection status
@@ -40,6 +43,7 @@ Import preview is read-only and writes no catalog or evidence files.
 Persistent import writes only to the local StockTrail database and never modifies Shopify.
 Admin-only evidence is not a storefront availability verdict.
 Ajax evidence is a cookieless observation from this CLI host, not a universal shopper verdict.
+Combined evidence is collection-only and does not assert an availability verdict.
 Full browser, cart, and checkout scans are not implemented yet. No store changes are made.`;
 
 async function promptForToken(): Promise<string> {
@@ -99,7 +103,7 @@ async function main() {
   if (values.preview !== undefined && command !== 'import') throw new Error('--preview is only supported with import.');
   if (values.limit !== undefined && command !== 'import') throw new Error('--limit is only supported with import.');
   if (values['product-id'] !== undefined && command !== 'monitor' && command !== 'scan') {
-    throw new Error('--product-id is only supported with monitor, scan --admin, or scan --ajax.');
+    throw new Error('--product-id is only supported with monitor or scan.');
   }
   const directory = dataDirectory();
   switch (command) {
@@ -144,7 +148,7 @@ async function main() {
       if (scanModes > 1) throw new Error('Use exactly one of scan --demo, scan --admin, or scan --ajax.');
       if (values.demo) {
         if (values['product-id'] !== undefined) {
-          throw new Error('--product-id is only supported with scan --admin or scan --ajax.');
+          throw new Error('--product-id cannot be combined with scan --demo.');
         }
         const { report, path } = await scanDemo(directory);
         console.log('DEMO — synthetic fixtures; no store was contacted.');
@@ -172,10 +176,12 @@ async function main() {
         for (const line of formatAjaxScan(result)) console.log(line);
         return;
       }
-      if (values['product-id'] !== undefined) throw new Error('--product-id requires scan --admin or scan --ajax.');
-      throw new Error(
-        'Full live storefront scans are not implemented. Use scan --admin, scan --ajax, or scan --demo.',
-      );
+      if (values['product-id'] === undefined) {
+        throw new Error('--product-id is required for a combined scan, or choose scan --admin, scan --ajax, or scan --demo.');
+      }
+      const result = await scanEvidenceBundle(directory, values['product-id']);
+      for (const line of formatEvidenceBundle(result)) console.log(line);
+      return;
     }
     case 'import': {
       const rawLimit = values.limit ?? (values.preview ? '5' : '250');

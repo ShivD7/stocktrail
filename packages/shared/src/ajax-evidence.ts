@@ -16,6 +16,8 @@ export const ajaxReasonCodeSchema = z.enum([
   'body_too_large',
   'unsupported_content_encoding',
   'non_json_content_type',
+  'non_html_content_type',
+  'unsupported_charset',
   'body_decode_failed',
   'malformed_json',
   'malformed_ajax_contract',
