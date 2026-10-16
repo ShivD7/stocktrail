@@ -12,6 +12,7 @@ export function assertShopifyProductGid(value: string): void {
 const adminVariantEvidenceSchema = z.object({
   id: z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\d+$/),
   legacyResourceId: z.string().regex(/^\d+$/),
+  sku: z.string().nullable().optional(),
   selectedOptions: z.array(selectedOptionSchema),
   inventoryPolicy: z.enum(['DENY', 'CONTINUE']),
   inventoryQuantity: z.number().int().nullable(),
@@ -45,6 +46,10 @@ export const adminEvidenceReportSchema = z.object({
   limitations: z.array(z.string().min(1)).min(1),
   product: z.object({
     id: shopifyProductGidSchema,
+    title: z.string().optional(),
+    handle: z.string().optional(),
+    descriptionHtml: z.string().optional(),
+    seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).optional(),
     status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED']),
     onlineStoreUrl: z.string().nullable(),
     updatedAt: canonicalUtcTimestampSchema,

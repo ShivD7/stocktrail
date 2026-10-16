@@ -62,6 +62,9 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('monitor').stderr, /monitor list/);
     assert.equal(run('monitor', 'list').status, 0);
     assert.match(run('monitor', 'list').stdout, /Monitored products: 0\/10/);
+    const emptyTests = run('test');
+    assert.equal(emptyTests.status, 0);
+    assert.match(emptyTests.stdout, /No active regression tests/);
     assert.equal(run('monitor', 'candidates').status, 0);
     assert.match(run('monitor', 'candidates').stdout, /No active imported products/);
     assert.match(run('monitor', 'add').stderr, /--product-id is required/);

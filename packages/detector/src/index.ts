@@ -28,3 +28,13 @@ export function compareAvailability(input: Observation): Finding {
     status: expected === null || observed === null ? 'inconclusive' : expected === observed ? 'pass' : 'fail',
   };
 }
+
+export { deriveExpectedPurchasable } from './admin-availability.js';
+export {
+  coalesceVariantMatches,
+  matchVariantReference,
+  normalizeOptionName,
+  normalizeOptionValue,
+} from './variant-matcher.js';
+export { evaluateST001, evaluateST002, evaluateST003 } from './rules.js';
+export { evaluateVariantDiagnostics } from './diagnostic.js';

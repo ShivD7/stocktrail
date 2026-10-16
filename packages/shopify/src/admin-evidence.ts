@@ -21,6 +21,7 @@ const pageInfoSchema = z.object({
 const variantSchema = z.object({
   id: z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\d+$/),
   legacyResourceId: z.string().regex(/^\d+$/),
+  sku: z.string().nullable().optional(),
   selectedOptions: z.array(z.object({ name: z.string(), value: z.string() })),
   inventoryPolicy: z.enum(['DENY', 'CONTINUE']),
   inventoryQuantity: z.number().int().nullable(),
@@ -35,6 +36,10 @@ const variantSchema = z.object({
 
 const productSchema = z.object({
   id: z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/),
+  title: z.string().optional(),
+  handle: z.string().optional(),
+  descriptionHtml: z.string().optional(),
+  seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).optional(),
   status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED']),
   onlineStoreUrl: z.string().nullable(),
   updatedAt: z.string(),
@@ -51,6 +56,10 @@ const adminEvidenceQuery = `#graphql
   query StockTrailAdminEvidence($productId: ID!, $first: Int!, $after: String) {
     product(id: $productId) {
       id
+      title
+      handle
+      descriptionHtml
+      seo { title description }
       status
       onlineStoreUrl
       updatedAt
@@ -58,6 +67,7 @@ const adminEvidenceQuery = `#graphql
         nodes {
           id
           legacyResourceId
+          sku
           selectedOptions { name value }
           inventoryPolicy
           inventoryQuantity
@@ -80,6 +90,10 @@ function malformedEvidenceResponse(): ShopifyResponseError {
 function consistentProduct(first: ProductPage, next: ProductPage): boolean {
   return first.id === next.id &&
     first.status === next.status &&
+    first.title === next.title &&
+    first.handle === next.handle &&
+    first.descriptionHtml === next.descriptionHtml &&
+    JSON.stringify(first.seo) === JSON.stringify(next.seo) &&
     first.onlineStoreUrl === next.onlineStoreUrl &&
     first.updatedAt === next.updatedAt;
 }
@@ -157,6 +171,10 @@ export async function readAdminProductEvidence(
     ],
     product: {
       id: firstProduct.id,
+      title: firstProduct.title,
+      handle: firstProduct.handle,
+      descriptionHtml: firstProduct.descriptionHtml,
+      seo: firstProduct.seo,
       status: firstProduct.status,
       onlineStoreUrl: firstProduct.onlineStoreUrl,
       updatedAt: firstProduct.updatedAt,

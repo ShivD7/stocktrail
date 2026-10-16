@@ -1,0 +1,10 @@
+{
+  "requestedVariantId": "gid://shopify/ProductVariant/9001",
+  "requestedLegacyVariantId": "9001",
+  "outcome": "observed",
+  "reasonCode": null,
+  "selectedLegacyVariantId": "9001",
+  "controlState": "enabled",
+  "cartOutcome": "succeeded",
+  "storefrontPurchasable": true
+}

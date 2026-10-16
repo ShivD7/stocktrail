@@ -20,6 +20,7 @@ npm run dev -- scan --product-id gid://shopify/Product/123
 npm run dev -- scan --admin --product-id gid://shopify/Product/123
 npm run dev -- scan --ajax --product-id gid://shopify/Product/123
 npm run dev -- scan --demo
+npm run dev -- test
 ```
 
 The demo uses two synthetic products, prints one FAIL and one PASS, and saves a JSON evidence report under `.stocktrail/reports`. It makes no network requests. A diagnostic contradiction exits with code **2**; command/configuration errors exit with **1**; success exits with **0**.
@@ -39,6 +40,8 @@ After an import, use `monitor candidates` to show active local Shopify product G
 `scan --ajax --product-id <gid>` first obtains fresh Admin evidence for the same eligible product, then derives a product JSON endpoint only from that fresh Online Store URL. It makes a cookieless public request from the CLI's own network and locale path, matches product and variant identities exactly, and saves only normalized fields, aggregate counts, response metadata, and a body hash. Redirects are not followed, DNS results are checked against private and reserved networks, and the request is pinned to a validated address. A product without an Online Store URL produces an inconclusive local report without making a public request. This is **Ajax-only evidence** from one request context—not a cart, checkout, browser-session, market-wide, or universal shopper verdict. Terminal output remains aggregate-only and does not reveal the URL, handle, product ID, timestamps, or report path.
 
 `scan --product-id <gid>` is the combined Phase 2 collection command. It validates eligibility once, reads fresh Admin evidence once, and collects cookieless Ajax JSON plus product HTML derived only from the fresh Online Store URL. Inline JSON-LD is tokenized and parsed without executing scripts or following discovered URLs. The run is staged privately and atomically published beneath the local evidence-artifact area; SQLite stores only product-linked integrity and index metadata. A public-source failure produces a partial bundle and still exits successfully, while eligibility, Admin, or secure-storage failures exit with an error. Terminal output contains aggregate source outcomes only. This command collects evidence—it does not declare PASS/FAIL, detect contradictions, score incidents, or recommend remediation.
+
+The Phase 3 deterministic core is implemented separately from the live scan: strict ID/SKU/options matching, Admin purchasability derivation, ST-001 through ST-003, the weighted Inventory Search Readiness diagnostic, incident lifecycle persistence, and data-only regression assertions. Synthetic Dawn fixtures exercise broken and corrected states offline. Until the approved browser runtime is integrated, `stocktrail test` never fabricates a browser result: stored live assertions are reported explicitly as inconclusive and exit with code **3**. A remaining contradiction exits with **2**, an operational error with **1**, and an all-pass or empty test run with **0**.
 
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Read-only Admin import and evidence commands retrieve this credential through the Shopify adapter; it is never sent to the public Ajax endpoint.
 
@@ -75,9 +78,9 @@ npm run build
 
 ## Next implementation work
 
-1. Add Week 3 deterministic contradiction rules and incident persistence without changing collected evidence.
-2. Add Week 4 regression assertions only after rule behavior is stable.
-3. Add rendered-browser, cart/checkout, polling, and a localhost dashboard only when needed.
+1. Integrate approved Dawn browser evidence into the live bundle and diagnostic pipeline.
+2. Feed fresh live diagnostic evaluations into the existing incident and regression-test repositories.
+3. Add broader browser contexts, polling, and a localhost dashboard only when needed.
 
 The combined scan is collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.
 

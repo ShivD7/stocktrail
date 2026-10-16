@@ -1,0 +1,14 @@
+{
+  "id": 9000,
+  "handle": "synthetic-trail-shoe",
+  "available": false,
+  "requires_selling_plan": false,
+  "variants": [
+    {
+      "id": 9001,
+      "available": false,
+      "inventory_management": "shopify",
+      "requires_selling_plan": false
+    }
+  ]
+}

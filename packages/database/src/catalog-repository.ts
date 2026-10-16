@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import {
@@ -6,6 +7,12 @@ import {
   type CatalogProduct,
   type CatalogProvenance,
 } from '../../shared/src/catalog.js';
+import {
+  ruleEvaluationSchema,
+  type RegressionAssertion,
+  type RuleEvaluation,
+} from '../../shared/src/diagnostics.js';
+import { readinessScoreSchema, type ReadinessScore } from '../../shared/src/readiness.js';
 
 const DATABASE_FILE = 'stocktrail.sqlite';
 export const MONITORED_PRODUCT_LIMIT = 10;
@@ -50,6 +57,36 @@ export type EvidenceRunMetadata = {
     sha256: string;
     bytes: number;
   }>;
+};
+
+export type DiagnosticRecordInput = {
+  evidenceRunId: string;
+  evaluatedAt: string;
+  evaluations: RuleEvaluation[];
+  readiness: ReadinessScore;
+};
+
+export type StoredRegressionTest = {
+  id: string;
+  incidentId: string;
+  productGid: string;
+  assertion: RegressionAssertion;
+};
+
+export type RegressionTestResultInput = {
+  testId: string;
+  outcome: 'pass' | 'fail' | 'inconclusive';
+  reasonCode: string;
+  evidenceRunId?: string | null;
+  evaluationId?: string | null;
+};
+
+export type RegressionTestRunSummary = {
+  id: string;
+  status: 'passed' | 'failed' | 'inconclusive';
+  passed: number;
+  failed: number;
+  inconclusive: number;
 };
 
 type Migration = string | ((database: DatabaseSync) => void);
@@ -279,10 +316,105 @@ const migrations: Migration[] = [
 
     CREATE INDEX IF NOT EXISTS evidence_runs_product_created ON evidence_runs(product_id, created_at);
   `,
+  `
+    CREATE TABLE IF NOT EXISTS rule_evaluations (
+      id TEXT PRIMARY KEY,
+      evidence_run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      variant_gid TEXT NOT NULL,
+      rule_id TEXT NOT NULL CHECK (rule_id IN ('ST-001', 'ST-002', 'ST-003')),
+      rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+      result TEXT NOT NULL CHECK (result IN ('pass', 'fail', 'inconclusive', 'not_applicable')),
+      severity TEXT NOT NULL CHECK (severity IN ('high', 'medium')),
+      reason_code TEXT NOT NULL,
+      match_method TEXT,
+      match_confidence TEXT,
+      evaluated_at TEXT NOT NULL,
+      UNIQUE (evidence_run_id, variant_gid, rule_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS incidents (
+      id TEXT PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      variant_gid TEXT NOT NULL,
+      rule_id TEXT NOT NULL CHECK (rule_id IN ('ST-001', 'ST-002', 'ST-003')),
+      status TEXT NOT NULL CHECK (status IN ('open', 'resolved', 'ignored')),
+      severity TEXT NOT NULL CHECK (severity IN ('high', 'medium')),
+      first_evaluation_id TEXT NOT NULL REFERENCES rule_evaluations(id),
+      latest_evaluation_id TEXT NOT NULL REFERENCES rule_evaluations(id),
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      last_evaluated_at TEXT NOT NULL,
+      resolved_at TEXT,
+      occurrence_count INTEGER NOT NULL CHECK (occurrence_count > 0),
+      UNIQUE (product_id, variant_gid, rule_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS regression_tests (
+      id TEXT PRIMARY KEY,
+      incident_id TEXT NOT NULL UNIQUE REFERENCES incidents(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      variant_gid TEXT NOT NULL,
+      rule_id TEXT NOT NULL CHECK (rule_id IN ('ST-001', 'ST-002', 'ST-003')),
+      rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+      assertion_type TEXT NOT NULL,
+      enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+      created_at TEXT NOT NULL,
+      last_run_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS readiness_scores (
+      evidence_run_id TEXT PRIMARY KEY REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      total INTEGER CHECK (total BETWEEN 0 AND 100),
+      known_points INTEGER NOT NULL CHECK (known_points BETWEEN 0 AND 100),
+      known_max INTEGER NOT NULL CHECK (known_max BETWEEN 0 AND 100)
+    );
+
+    CREATE TABLE IF NOT EXISTS readiness_components (
+      evidence_run_id TEXT NOT NULL REFERENCES readiness_scores(evidence_run_id) ON DELETE CASCADE,
+      component TEXT NOT NULL,
+      weight INTEGER NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('ready', 'not_ready', 'inconclusive')),
+      points INTEGER,
+      reason_codes_json TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      PRIMARY KEY (evidence_run_id, component)
+    );
+
+    CREATE TABLE IF NOT EXISTS test_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'inconclusive')),
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      passed_count INTEGER NOT NULL,
+      failed_count INTEGER NOT NULL,
+      inconclusive_count INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS test_results (
+      test_run_id TEXT NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      test_id TEXT NOT NULL REFERENCES regression_tests(id) ON DELETE CASCADE,
+      evidence_run_id TEXT REFERENCES evidence_runs(id) ON DELETE SET NULL,
+      evaluation_id TEXT REFERENCES rule_evaluations(id) ON DELETE SET NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('pass', 'fail', 'inconclusive')),
+      reason_code TEXT NOT NULL,
+      PRIMARY KEY (test_run_id, test_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS rule_evaluations_run ON rule_evaluations(evidence_run_id);
+    CREATE INDEX IF NOT EXISTS incidents_status ON incidents(status, product_id);
+    CREATE INDEX IF NOT EXISTS regression_tests_enabled ON regression_tests(enabled, product_id);
+  `,
 ];
 
 function count(statement: StatementSync, ...values: SQLInputValue[]): number {
   return Number((statement.get(...values) as CountRow).count);
+}
+
+function assertionType(ruleId: RuleEvaluation['ruleId']): RegressionAssertion['assertionType'] {
+  if (ruleId === 'ST-001') return 'admin_unavailable_not_jsonld_in_stock';
+  if (ruleId === 'ST-002') return 'admin_unavailable_not_storefront_permitted';
+  return 'admin_sellable_not_storefront_blocked';
 }
 
 export class CatalogRepository {
@@ -571,6 +703,225 @@ export class CatalogRepository {
         );
       }
     });
+  }
+
+  recordDiagnosticResults(
+    shop: string,
+    productGid: string,
+    input: DiagnosticRecordInput,
+  ): { incidentCount: number; regressionTestCount: number } {
+    this.validateProductGid(productGid);
+    const parsedEvaluations = input.evaluations.map(value => ruleEvaluationSchema.parse(value));
+    const readiness = readinessScoreSchema.parse(input.readiness);
+    return this.transaction(() => {
+      const product = this.database.prepare(`
+        SELECT products.id AS product_id
+        FROM products JOIN shops ON shops.id = products.shop_id
+        WHERE shops.domain = ? AND products.shopify_gid = ?
+      `).get(shop, productGid) as { product_id: number } | undefined;
+      if (!product) throw new Error('Cannot record diagnostics for an unknown product.');
+      const run = this.database.prepare('SELECT id FROM evidence_runs WHERE id = ? AND product_id = ?')
+        .get(input.evidenceRunId, product.product_id);
+      if (!run) throw new Error('Cannot record diagnostics without matching evidence.');
+
+      this.database.prepare(`
+        INSERT INTO readiness_scores (evidence_run_id, total, known_points, known_max)
+        VALUES (?, ?, ?, ?)
+      `).run(input.evidenceRunId, readiness.total, readiness.knownPoints, readiness.knownMax);
+      const insertComponent = this.database.prepare(`
+        INSERT INTO readiness_components (
+          evidence_run_id, component, weight, outcome, points,
+          reason_codes_json, evidence_refs_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const component of readiness.components) {
+        insertComponent.run(
+          input.evidenceRunId, component.id, component.weight, component.outcome, component.points,
+          JSON.stringify(component.reasonCodes), JSON.stringify(component.evidenceRefs),
+        );
+      }
+
+      const insertEvaluation = this.database.prepare(`
+        INSERT INTO rule_evaluations (
+          id, evidence_run_id, product_id, variant_gid, rule_id, rule_version,
+          result, severity, reason_code, match_method, match_confidence, evaluated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const evaluation of parsedEvaluations) {
+        if (evaluation.productId !== productGid || evaluation.evidenceRunId !== input.evidenceRunId) {
+          throw new Error('Diagnostic evaluation does not belong to the evidence run.');
+        }
+        const evaluationId = randomUUID();
+        insertEvaluation.run(
+          evaluationId, input.evidenceRunId, product.product_id, evaluation.variantId,
+          evaluation.ruleId, evaluation.ruleVersion, evaluation.result, evaluation.severity,
+          evaluation.reasonCode,
+          evaluation.match?.outcome === 'matched' ? evaluation.match.method : null,
+          evaluation.match?.outcome === 'matched' ? evaluation.match.confidence : null,
+          evaluation.evaluatedAt,
+        );
+        const existing = this.database.prepare(`
+          SELECT id, status FROM incidents
+          WHERE product_id = ? AND variant_gid = ? AND rule_id = ?
+        `).get(product.product_id, evaluation.variantId, evaluation.ruleId) as
+          { id: string; status: 'open' | 'resolved' | 'ignored' } | undefined;
+
+        if (evaluation.result === 'fail') {
+          if (!existing) {
+            const incidentId = randomUUID();
+            this.database.prepare(`
+              INSERT INTO incidents (
+                id, product_id, variant_gid, rule_id, status, severity,
+                first_evaluation_id, latest_evaluation_id, first_seen_at,
+                last_seen_at, last_evaluated_at, resolved_at, occurrence_count
+              ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, NULL, 1)
+            `).run(
+              incidentId, product.product_id, evaluation.variantId, evaluation.ruleId,
+              evaluation.severity, evaluationId, evaluationId, evaluation.evaluatedAt,
+              evaluation.evaluatedAt, evaluation.evaluatedAt,
+            );
+            this.database.prepare(`
+              INSERT INTO regression_tests (
+                id, incident_id, product_id, variant_gid, rule_id, rule_version,
+                assertion_type, enabled, created_at
+              ) VALUES (?, ?, ?, ?, ?, 1, ?, 1, ?)
+            `).run(
+              randomUUID(), incidentId, product.product_id, evaluation.variantId,
+              evaluation.ruleId, assertionType(evaluation.ruleId), evaluation.evaluatedAt,
+            );
+          } else {
+            this.database.prepare(`
+              UPDATE incidents SET
+                status = CASE WHEN status = 'ignored' THEN 'ignored' ELSE 'open' END,
+                latest_evaluation_id = ?, last_seen_at = ?, last_evaluated_at = ?,
+                resolved_at = CASE WHEN status = 'ignored' THEN resolved_at ELSE NULL END,
+                occurrence_count = occurrence_count + 1
+              WHERE id = ?
+            `).run(evaluationId, evaluation.evaluatedAt, evaluation.evaluatedAt, existing.id);
+            if (existing.status !== 'ignored') {
+              this.database.prepare('UPDATE regression_tests SET enabled = 1 WHERE incident_id = ?')
+                .run(existing.id);
+            }
+          }
+        } else if (existing) {
+          this.database.prepare(`
+            UPDATE incidents SET latest_evaluation_id = ?, last_evaluated_at = ?
+            WHERE id = ?
+          `).run(evaluationId, evaluation.evaluatedAt, existing.id);
+          if ((evaluation.result === 'pass' || evaluation.result === 'not_applicable') && existing.status === 'open') {
+            this.database.prepare(`
+              UPDATE incidents SET status = 'resolved', resolved_at = ? WHERE id = ?
+            `).run(evaluation.evaluatedAt, existing.id);
+          }
+        }
+      }
+      return {
+        incidentCount: count(this.database.prepare('SELECT COUNT(*) AS count FROM incidents WHERE product_id = ?'), product.product_id),
+        regressionTestCount: count(this.database.prepare('SELECT COUNT(*) AS count FROM regression_tests WHERE product_id = ?'), product.product_id),
+      };
+    });
+  }
+
+  listActiveRegressionTests(): StoredRegressionTest[] {
+    const rows = this.database.prepare(`
+      SELECT regression_tests.id, regression_tests.incident_id, regression_tests.variant_gid,
+        regression_tests.rule_id, regression_tests.rule_version, regression_tests.assertion_type,
+        products.shopify_gid AS product_gid
+      FROM regression_tests
+      JOIN incidents ON incidents.id = regression_tests.incident_id
+      JOIN products ON products.id = regression_tests.product_id
+      WHERE regression_tests.enabled = 1 AND incidents.status = 'open'
+      ORDER BY products.shopify_gid, regression_tests.rule_id, regression_tests.variant_gid
+    `).all() as Array<{
+      id: string; incident_id: string; variant_gid: string; rule_id: RegressionAssertion['ruleId'];
+      rule_version: 1; assertion_type: RegressionAssertion['assertionType']; product_gid: string;
+    }>;
+    return rows.map(row => ({
+      id: row.id,
+      incidentId: row.incident_id,
+      productGid: row.product_gid,
+      assertion: {
+        schemaVersion: 1,
+        ruleVersion: row.rule_version,
+        assertionType: row.assertion_type,
+        ruleId: row.rule_id,
+        productId: row.product_gid,
+        variantId: row.variant_gid,
+      },
+    }));
+  }
+
+  recordRegressionTestRun(
+    startedAt: string,
+    completedAt: string,
+    results: RegressionTestResultInput[],
+  ): RegressionTestRunSummary {
+    return this.transaction(() => {
+      const passed = results.filter(value => value.outcome === 'pass').length;
+      const failed = results.filter(value => value.outcome === 'fail').length;
+      const inconclusive = results.filter(value => value.outcome === 'inconclusive').length;
+      const status = failed > 0 ? 'failed' : inconclusive > 0 ? 'inconclusive' : 'passed';
+      const id = randomUUID();
+      this.database.prepare(`
+        INSERT INTO test_runs (
+          id, status, started_at, completed_at, passed_count, failed_count, inconclusive_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, status, startedAt, completedAt, passed, failed, inconclusive);
+      const insertResult = this.database.prepare(`
+        INSERT INTO test_results (
+          test_run_id, test_id, evidence_run_id, evaluation_id, outcome, reason_code
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const result of results) {
+        const test = this.database.prepare(`
+          SELECT regression_tests.incident_id, incidents.status
+          FROM regression_tests JOIN incidents ON incidents.id = regression_tests.incident_id
+          WHERE regression_tests.id = ?
+        `).get(result.testId) as { incident_id: string; status: string } | undefined;
+        if (!test) throw new Error('Regression test no longer exists.');
+        insertResult.run(
+          id, result.testId, result.evidenceRunId ?? null, result.evaluationId ?? null,
+          result.outcome, result.reasonCode,
+        );
+        this.database.prepare('UPDATE regression_tests SET last_run_at = ? WHERE id = ?')
+          .run(completedAt, result.testId);
+        if (test.status !== 'ignored') {
+          if (result.outcome === 'pass') {
+            this.database.prepare(`
+              UPDATE incidents SET status = 'resolved', resolved_at = ?, last_evaluated_at = ?
+              WHERE id = ? AND status = 'open'
+            `).run(completedAt, completedAt, test.incident_id);
+          } else if (result.outcome === 'fail') {
+            this.database.prepare(`
+              UPDATE incidents SET status = 'open', resolved_at = NULL, last_evaluated_at = ?
+              WHERE id = ?
+            `).run(completedAt, test.incident_id);
+          }
+        }
+      }
+      return { id, status, passed, failed, inconclusive };
+    });
+  }
+
+  setIncidentStatus(incidentId: string, status: 'open' | 'resolved' | 'ignored'): void {
+    this.transaction(() => {
+      const changed = this.database.prepare(`
+        UPDATE incidents SET status = ?, resolved_at = CASE WHEN ? = 'resolved' THEN CURRENT_TIMESTAMP ELSE resolved_at END
+        WHERE id = ?
+      `).run(status, status, incidentId);
+      if (Number(changed.changes) !== 1) throw new Error('Incident does not exist.');
+      this.database.prepare('UPDATE regression_tests SET enabled = ? WHERE incident_id = ?')
+        .run(status === 'open' ? 1 : 0, incidentId);
+    });
+  }
+
+  diagnosticCounts(): { evaluations: number; incidents: number; tests: number; testRuns: number } {
+    return {
+      evaluations: count(this.database.prepare('SELECT COUNT(*) AS count FROM rule_evaluations')),
+      incidents: count(this.database.prepare('SELECT COUNT(*) AS count FROM incidents')),
+      tests: count(this.database.prepare('SELECT COUNT(*) AS count FROM regression_tests')),
+      testRuns: count(this.database.prepare('SELECT COUNT(*) AS count FROM test_runs')),
+    };
   }
 
   private monitoringSummaryByShopId(shopId: number): MonitoringSummary {

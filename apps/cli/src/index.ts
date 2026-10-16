@@ -13,6 +13,8 @@ import { scanAjaxEvidence } from '../../../packages/agent/src/ajax-scan.js';
 import { formatAjaxScan } from './ajax-output.js';
 import { scanEvidenceBundle } from '../../../packages/agent/src/combined-scan.js';
 import { formatEvidenceBundle } from './bundle-output.js';
+import { runStoredRegressionTests } from '../../../packages/test-runner/src/index.js';
+import { formatStoredTestRun } from './test-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -24,6 +26,7 @@ Usage: stocktrail <command> [options]
   logout                                Delete the stored Shopify token
   doctor                                Check local setup (offline)
   scan --demo                           Run synthetic diagnostics and save evidence
+  test                                  Rerun stored deterministic assertions
   scan --admin --product-id <gid>       Save Admin-only evidence for a monitored product
   scan --ajax --product-id <gid>        Save cookieless Ajax evidence for a monitored product
   scan --product-id <gid>               Save combined Admin, storefront, and JSON-LD evidence
@@ -181,6 +184,13 @@ async function main() {
       }
       const result = await scanEvidenceBundle(directory, values['product-id']);
       for (const line of formatEvidenceBundle(result)) console.log(line);
+      return;
+    }
+    case 'test': {
+      const result = await runStoredRegressionTests(directory);
+      for (const line of formatStoredTestRun(result)) console.log(line);
+      if (result.summary?.status === 'failed') process.exitCode = 2;
+      else if (result.summary?.status === 'inconclusive') process.exitCode = 3;
       return;
     }
     case 'import': {

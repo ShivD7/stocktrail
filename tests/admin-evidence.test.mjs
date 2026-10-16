@@ -52,7 +52,7 @@ function clock(...values) {
   return () => new Date(values[index++] ?? values.at(-1));
 }
 
-test('reads a complete, minimal Admin-only evidence report', async () => {
+test('reads complete Admin evidence with the bounded content fields required for deterministic scoring', async () => {
   const requests = [];
   const client = new ShopifyAdminClient(shop, credential, async (_url, options) => {
     const body = JSON.parse(options.body);
@@ -69,7 +69,11 @@ test('reads a complete, minimal Admin-only evidence report', async () => {
   assert.equal(requests[0].variables.productId, productId);
   assert.equal(requests[0].variables.first, 100);
   assert.equal(requests[0].variables.after, null);
-  assert.doesNotMatch(requests[0].query, /\b(title|description|handle|sku|media|price)\b/i);
+  assert.match(requests[0].query, /\btitle\b/);
+  assert.match(requests[0].query, /descriptionHtml/);
+  assert.match(requests[0].query, /\bhandle\b/);
+  assert.match(requests[0].query, /\bsku\b/);
+  assert.doesNotMatch(requests[0].query, /\b(media|price)\b/i);
   assert.deepEqual(report.observationWindow, {
     startedAt: '2026-10-15T12:00:00.000Z',
     completedAt: '2026-10-15T12:00:01.000Z',

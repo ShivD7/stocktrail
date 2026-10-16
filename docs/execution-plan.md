@@ -356,6 +356,8 @@ Current implementation note: the combined `scan --product-id <gid>` command now 
 
 ### Week 3 — October 17–23: deterministic detective
 
+Current implementation note: the pure Phase 3 core now includes strict variant identity, Admin purchasability derivation, ST-001 through ST-003, weighted readiness scoring, incident and data-assertion persistence, an injected regression runner, and synthetic broken/corrected Dawn evidence. The ordinary live scan remains collection-only until the browser runtime and its network-safety adapter are approved and integrated; stored live tests therefore report explicit inconclusive results rather than fabricated passes.
+
 - Implement strict variant matching.
 - Implement ST-001, ST-002, and ST-003.
 - Create fixtures for matching, contradictory, and inconclusive evidence.

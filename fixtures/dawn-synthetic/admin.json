@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "mode": "admin_only",
+  "source": "shopify_admin_graphql",
+  "productId": "gid://shopify/Product/9000",
+  "observationWindow": {
+    "startedAt": "2026-10-16T12:00:00.000Z",
+    "completedAt": "2026-10-16T12:00:01.000Z"
+  },
+  "apiVersion": { "requested": "2026-10", "response": "2026-10" },
+  "pageCount": 1,
+  "complete": true,
+  "limitations": ["Synthetic offline fixture."],
+  "product": {
+    "id": "gid://shopify/Product/9000",
+    "title": "Synthetic Trail Shoe",
+    "handle": "synthetic-trail-shoe",
+    "descriptionHtml": "<p>Ordinary synthetic product copy.</p>",
+    "seo": { "title": "Synthetic Trail Shoe", "description": "Synthetic fixture only." },
+    "status": "ACTIVE",
+    "onlineStoreUrl": "https://synthetic-store.invalid/products/synthetic-trail-shoe",
+    "updatedAt": "2026-10-16T11:30:00.000Z",
+    "variants": [
+      {
+        "id": "gid://shopify/ProductVariant/9001",
+        "legacyResourceId": "9001",
+        "sku": "SYNTH-RED-10",
+        "selectedOptions": [
+          { "name": "Color", "value": "Red" },
+          { "name": "Size", "value": "10" }
+        ],
+        "inventoryPolicy": "DENY",
+        "inventoryQuantity": 0,
+        "sellableOnlineQuantity": 0,
+        "updatedAt": "2026-10-16T11:45:00.000Z",
+        "inventoryItem": {
+          "id": "gid://shopify/InventoryItem/9101",
+          "tracked": true,
+          "updatedAt": "2026-10-16T11:45:00.000Z"
+        }
+      }
+    ]
+  }
+}
