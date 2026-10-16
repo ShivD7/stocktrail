@@ -17,15 +17,17 @@ export const catalogVariantSchema = z.object({
   inventoryItem: z.object({ tracked: z.boolean() }),
 });
 
+export const canonicalUtcTimestampSchema = z.string().refine(
+  value => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+  },
+  'Expected a canonical ISO UTC timestamp.',
+);
+
 export const catalogProvenanceSchema = z.object({
-  observedAt: z.string().refine(
-    value => {
-      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
-      const timestamp = Date.parse(value);
-      return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
-    },
-    'observedAt must be an ISO UTC timestamp.',
-  ),
+  observedAt: canonicalUtcTimestampSchema,
   evidenceSource: z.literal('shopify_admin_graphql'),
   apiVersion: z.literal('2026-10'),
 });

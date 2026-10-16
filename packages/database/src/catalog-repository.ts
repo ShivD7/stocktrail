@@ -436,6 +436,29 @@ export class CatalogRepository {
     }));
   }
 
+  validateAdminEvidenceTarget(shop: string, productGid: string): void {
+    this.validateProductGid(productGid);
+    const product = this.database.prepare(`
+      SELECT products.is_present AS present,
+        CASE WHEN monitored_products.product_id IS NULL THEN 0 ELSE 1 END AS monitored
+      FROM products
+      JOIN shops ON shops.id = products.shop_id
+      LEFT JOIN monitored_products
+        ON monitored_products.shop_id = products.shop_id
+        AND monitored_products.product_id = products.id
+      WHERE shops.domain = ? AND products.shopify_gid = ?
+    `).get(shop, productGid) as { present: number; monitored: number } | undefined;
+    if (!product) {
+      throw new Error('The product is not in the configured shop local catalog. Run stocktrail import first.');
+    }
+    if (product.present !== 1) {
+      throw new Error('The selected product is inactive in the local catalog. Run stocktrail import first.');
+    }
+    if (product.monitored !== 1) {
+      throw new Error('The selected product is not monitored. Use stocktrail monitor add first.');
+    }
+  }
+
   catalogCounts(shop: string): { products: number; variants: number; imports: number } {
     const row = this.database.prepare(`
       SELECT

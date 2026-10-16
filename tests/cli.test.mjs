@@ -17,12 +17,36 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);
     assert.equal(run('doctor').status, 1);
+    assert.match(run('scan').stderr, /Full live storefront scans are not implemented/);
+    assert.match(run('scan', '--admin').stderr, /--product-id is required/);
+    assert.match(run('scan', '--admin', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
+    assert.match(
+      run('scan', '--admin', '--product-id', 'gid://shopify/Product/1').stderr,
+      /No local configuration/,
+    );
+    assert.match(run('scan', '--ajax').stderr, /--product-id is required/);
+    assert.match(run('scan', '--ajax', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
+    assert.match(
+      run('scan', '--ajax', '--product-id', 'gid://shopify/Product/1').stderr,
+      /No local configuration/,
+    );
+    assert.match(run('scan', '--demo', '--admin').stderr, /exactly one of scan --demo, scan --admin, or scan --ajax/);
+    assert.match(run('scan', '--admin', '--ajax').stderr, /exactly one of scan --demo, scan --admin, or scan --ajax/);
+    assert.match(
+      run('scan', '--demo', '--product-id', 'gid://shopify/Product/1').stderr,
+      /only supported with scan --admin or scan --ajax/,
+    );
+    assert.match(run('doctor', '--admin').stderr, /only supported with scan/);
+    assert.match(run('doctor', '--ajax').stderr, /only supported with scan/);
     assert.match(run('import').stderr, /No local configuration/);
     assert.match(run('import', '--preview', '--limit', '0').stderr, /whole number from 1 to 250/);
     assert.match(run('import', '--preview', '--limit', 'five').stderr, /whole number from 1 to 250/);
     assert.match(run('doctor', '--preview').stderr, /only supported with import/);
     assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
-    assert.match(run('doctor', '--product-id', 'gid://shopify/Product/1').stderr, /only supported with monitor/);
+    assert.match(
+      run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
+      /only supported with monitor, scan --admin, or scan --ajax/,
+    );
     assert.equal(run('init', '--shop', 'https://bad.example').status, 1);
     assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);
     assert.equal(run('init', '--shop', 'replacement.myshopify.com').status, 1);
