@@ -13,7 +13,10 @@ function adminReport(onlineStoreUrl = 'https://store.example/en-ca/products/synt
     apiVersion: { requested: '2026-10', response: '2026-10' }, pageCount: 1, complete: true,
     limitations: ['Synthetic Admin context.'],
     product: {
-      id: productId, status: 'ACTIVE', onlineStoreUrl, updatedAt: '2026-10-15T11:00:00.000Z',
+      id: productId, title: 'Private clean trail shoe', handle: 'synthetic-item',
+      descriptionHtml: '<p>Durable private fixture content.</p>',
+      seo: { title: 'Private clean SEO title', description: 'Private clean SEO description.' },
+      status: 'ACTIVE', onlineStoreUrl, updatedAt: '2026-10-15T11:00:00.000Z',
       variants: [{
         id: 'gid://shopify/ProductVariant/701', legacyResourceId: '701',
         selectedOptions: [{ name: 'Size', value: 'One' }], inventoryPolicy: 'DENY',
@@ -46,9 +49,10 @@ const htmlText = `<!doctype html><html><head>
 function dependencies({ admin = adminReport(), ajax = fetched(ajaxText, 'application/json'), html = fetched(htmlText, 'text/html') } = {}) {
   const calls = [];
   const saved = [];
+  const diagnostics = [];
   const times = [new Date('2026-10-15T12:00:00.000Z'), new Date('2026-10-15T12:00:02.000Z')];
   return {
-    calls, saved,
+    calls, saved, diagnostics,
     value: {
       async readConfig() { calls.push('config'); return { version: 1, shop }; },
       async validateTarget() { calls.push('validate'); },
@@ -56,6 +60,25 @@ function dependencies({ admin = adminReport(), ajax = fetched(ajaxText, 'applica
       async readAdmin() { calls.push('admin'); return admin; },
       async fetchAjax() { calls.push('ajax'); return ajax; },
       async fetchHtml() { calls.push('html'); return html; },
+      async collectBrowser() {
+        calls.push('browser');
+        return {
+          schemaVersion: 1, source: 'browser', outcome: 'observed', reasonCode: null,
+          observationWindow: { startedAt: '2026-10-15T12:00:01.000Z', completedAt: '2026-10-15T12:00:02.000Z' },
+          cartAuthorized: false,
+          observations: [{
+            requestedVariantId: 'gid://shopify/ProductVariant/701', requestedLegacyVariantId: '701',
+            outcome: 'observed', reasonCode: null, selectedLegacyVariantId: '701',
+            controlState: 'enabled', cartOutcome: 'not_attempted', storefrontPurchasable: true,
+            controlVisible: true, controlEnabled: true, controlDisabled: false,
+            ariaDisabled: false, controlLabel: 'Add to cart',
+          }],
+          limitations: ['Synthetic browser evidence.'],
+        };
+      },
+      async persistDiagnostics(_directory, _shop, _productId, input) {
+        calls.push('persist'); diagnostics.push(input);
+      },
       async saveBundle(_directory, _shop, _productId, _runId, inputs, bundle) {
         calls.push('save'); saved.push({ inputs, bundle }); return bundle;
       },
@@ -116,4 +139,66 @@ test('validates eligibility before credentials and collection', async () => {
   fixture.value.validateTarget = async () => { fixture.calls.push('validate'); throw new Error('Synthetic rejection'); };
   await assert.rejects(() => scanEvidenceBundle('unused', productId, fixture.value), /Synthetic rejection/);
   assert.deepEqual(fixture.calls, ['config', 'validate']);
+});
+
+test('browser mode emits a v2 bundle and persists deterministic aggregate diagnostics', async () => {
+  const fixture = dependencies();
+  const result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  assert.equal(result.bundle.schemaVersion, 2);
+  assert.equal(result.bundle.sources.browser.outcome, 'observed');
+  assert.equal(result.bundle.artifacts.some(artifact => artifact.relativePath === 'browser.json'), true);
+  assert.equal(result.evaluations.length, 3);
+  assert.equal(result.evaluations.find(value => value.ruleId === 'ST-003').result, 'pass');
+  assert.equal(result.readinessTotal, 100);
+  assert.equal(fixture.diagnostics[0].readiness.total, 100);
+  assert.deepEqual(fixture.diagnostics[0].readiness.components.map(value => value.points), [30, 25, 20, 15, 10]);
+  assert.deepEqual(fixture.calls, ['config', 'validate', 'token', 'admin', 'ajax', 'html', 'browser', 'save', 'persist']);
+  const output = formatEvidenceBundle(result).join('\n');
+  assert.match(output, /BROWSER DIAGNOSTIC/);
+  assert.match(output, /Browser: OBSERVED/);
+  assert.match(output, /Rules:/);
+  assert.doesNotMatch(output, /gid:\/\/|synthetic-item|store\.example|701|2026-|123e|unused|secret|Private clean|Durable private/i);
+});
+
+test('browser readiness lowers promise and stale-safety components for transient Admin claims without leaking them', async () => {
+  const admin = adminReport();
+  admin.product.descriptionHtml = '<p>Only 3 left. Ships tomorrow. PRIVATE CLAIM MARKER.</p>';
+  admin.product.updatedAt = '2026-10-15T08:00:00.000Z';
+  admin.product.variants[0].inventoryItem.updatedAt = '2026-10-15T09:00:00.000Z';
+  const fixture = dependencies({ admin });
+  const result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  const readiness = fixture.diagnostics[0].readiness;
+  assert.equal(result.readinessTotal, 75);
+  assert.equal(readiness.components.find(value => value.id === 'inventory_promise_clarity').points, 0);
+  assert.deepEqual(
+    readiness.components.find(value => value.id === 'inventory_promise_clarity').reasonCodes,
+    ['exact_quantity', 'unsupported_delivery'],
+  );
+  assert.equal(readiness.components.find(value => value.id === 'stale_claim_safety').points, 0);
+  assert.deepEqual(
+    readiness.components.find(value => value.id === 'stale_claim_safety').reasonCodes,
+    ['content_predates_inventory_change'],
+  );
+  const output = formatEvidenceBundle(result).join('\n');
+  assert.match(output, /Inventory Search Readiness: 75\/100/);
+  assert.doesNotMatch(output, /Only 3 left|Ships tomorrow|PRIVATE CLAIM MARKER|Private clean/i);
+});
+
+test('missing or invalid fresh Admin content keeps content readiness explicitly inconclusive', async () => {
+  for (const admin of [
+    (() => { const value = adminReport(); delete value.product.descriptionHtml; return value; })(),
+    (() => { const value = adminReport(); value.product.title = 'Invalid\0title'; return value; })(),
+  ]) {
+    const fixture = dependencies({ admin });
+    const result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+    const readiness = fixture.diagnostics[0].readiness;
+    assert.equal(result.readinessTotal, null);
+    assert.equal(readiness.knownPoints, 75);
+    assert.equal(readiness.knownMax, 75);
+    for (const id of ['inventory_promise_clarity', 'stale_claim_safety']) {
+      const component = readiness.components.find(value => value.id === id);
+      assert.equal(component.outcome, 'inconclusive');
+      assert.deepEqual(component.reasonCodes, ['admin_content_unavailable']);
+    }
+  }
 });

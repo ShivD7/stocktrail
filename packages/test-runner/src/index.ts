@@ -5,6 +5,7 @@ import {
   type StoredRegressionTest,
 } from '../../database/src/catalog-repository.js';
 import type { RuleEvaluation } from '../../shared/src/diagnostics.js';
+import { scanEvidenceBundle } from '../../agent/src/combined-scan.js';
 
 export type TestExecution = {
   testId: string;
@@ -56,7 +57,7 @@ export function evaluateStoredAssertion(
 const defaultDependencies: TestRunnerDependencies = {
   openRepository: openCatalogRepository,
   async collectProduct() {
-    // The live browser seam is intentionally not implemented until its runtime is approved.
+    // Plain `stocktrail test` deliberately avoids fresh network and browser collection.
     return { evaluations: [], evidenceRunId: null };
   },
   now: () => new Date(),
@@ -83,7 +84,7 @@ export async function runStoredRegressionTests(
     const collected = await dependencies.collectProduct(productGid, productTests);
     for (const test of productTests) {
       const execution = evaluateStoredAssertion(test, collected.evaluations, collected.evidenceRunId);
-      if (execution.reasonCode === 'fresh_rule_evaluation_unavailable') {
+      if (dependencies === defaultDependencies && execution.reasonCode === 'fresh_rule_evaluation_unavailable') {
         execution.reasonCode = 'browser_runtime_not_integrated';
       }
       executions.push(execution);
@@ -106,4 +107,26 @@ export async function runStoredRegressionTests(
   } finally {
     repository.close();
   }
+}
+
+export async function runBrowserRegressionTests(
+  directory: string,
+  cartAuthorized = false,
+): Promise<StoredTestRunResult> {
+  return runStoredRegressionTests(directory, {
+    openRepository: openCatalogRepository,
+    async collectProduct(productGid) {
+      const result = await scanEvidenceBundle(
+        directory,
+        productGid,
+        undefined,
+        { browser: true, cartAdd: cartAuthorized },
+      );
+      return {
+        evaluations: result.evaluations ?? [],
+        evidenceRunId: result.bundle.runId,
+      };
+    },
+    now: () => new Date(),
+  });
 }

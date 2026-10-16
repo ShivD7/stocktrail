@@ -30,8 +30,19 @@ import {
   type BundleArtifactInput,
 } from './bundle-storage.js';
 import { openCatalogRepository } from '../../database/src/catalog-repository.js';
+import { collectBrowserEvidence } from '../../shopify/src/browser.js';
+import type { BrowserEvidence } from '../../shared/src/browser-evidence.js';
+import { evaluateVariantDiagnostics } from '../../detector/src/diagnostic.js';
+import {
+  scoreInventorySearchReadiness,
+  type AdminContentEvidence,
+} from '../../scorer/src/readiness.js';
+import { persistDiagnosticResults } from './diagnostic-results.js';
+import type { RuleEvaluation } from '../../shared/src/diagnostics.js';
+import type { ReadinessScore } from '../../shared/src/readiness.js';
 
-export type CombinedScanResult = { bundle: ProductEvidenceBundle };
+export type CombinedScanResult = { bundle: ProductEvidenceBundle; evaluations?: RuleEvaluation[]; readinessTotal?: number | null };
+export type CombinedScanOptions = { browser?: boolean; cartAdd?: boolean };
 
 export type CombinedScanDependencies = {
   readConfig(directory: string): Promise<Config>;
@@ -40,6 +51,13 @@ export type CombinedScanDependencies = {
   readAdmin(shop: string, token: string, productId: string): Promise<AdminEvidenceReport>;
   fetchAjax(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
   fetchHtml(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
+  collectBrowser(admin: AdminEvidenceReport, ajax: AjaxNormalizedProduct, cartAuthorized: boolean): Promise<BrowserEvidence>;
+  persistDiagnostics(
+    directory: string,
+    shop: string,
+    productId: string,
+    input: { evidenceRunId: string; evaluatedAt: string; evaluations: RuleEvaluation[]; readiness: ReadinessScore },
+  ): Promise<unknown>;
   saveBundle(
     directory: string,
     shop: string,
@@ -65,7 +83,7 @@ export async function saveEvidenceBundle(
     const repository = await openCatalogRepository(directory);
     try {
       const sources = Object.entries(written.bundle.sources).map(([source, value]) => ({
-        source: source as 'admin' | 'ajax' | 'html' | 'jsonld',
+        source: source as 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser',
         outcome: value.outcome,
         reasonCode: value.reasonCode,
         status: value.status,
@@ -99,6 +117,8 @@ const defaultDependencies: CombinedScanDependencies = {
   },
   fetchAjax: fetchAjaxProduct,
   fetchHtml: fetchHtmlProduct,
+  collectBrowser: collectBrowserEvidence,
+  persistDiagnostics: persistDiagnosticResults,
   saveBundle: saveEvidenceBundle,
   now: () => new Date(),
   uuid: randomUUID,
@@ -134,14 +154,66 @@ function matchAjax(
   return { reasonCode: null, matched };
 }
 
-function refsFor(source: 'admin' | 'ajax' | 'html' | 'jsonld', artifacts: BundleArtifact[]): BundleArtifact[] {
+function refsFor(source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser', artifacts: BundleArtifact[]): BundleArtifact[] {
   return artifacts.filter(artifact => artifact.source === source);
+}
+
+const ADMIN_TITLE_LIMIT = 1_000;
+const ADMIN_DESCRIPTION_LIMIT = 1_000_000;
+const ADMIN_SEO_LIMIT = 10_000;
+
+function normalizedAdminText(
+  value: unknown,
+  maximum: number,
+  allowEmpty: boolean,
+): string | null {
+  if (typeof value !== 'string' || value.length > maximum || value.includes('\0')) return null;
+  const normalized = value.trim();
+  return allowEmpty || normalized.length > 0 ? normalized : null;
+}
+
+export function adminContentForReadiness(admin: AdminEvidenceReport): AdminContentEvidence | null {
+  const title = normalizedAdminText(admin.product.title, ADMIN_TITLE_LIMIT, false);
+  const descriptionHtml = normalizedAdminText(admin.product.descriptionHtml, ADMIN_DESCRIPTION_LIMIT, true);
+  const seo = admin.product.seo;
+  if (title === null || descriptionHtml === null || seo === undefined || admin.product.variants.length === 0) {
+    return null;
+  }
+  const seoTitle = seo.title === null ? null : normalizedAdminText(seo.title, ADMIN_SEO_LIMIT, true);
+  const seoDescription = seo.description === null
+    ? null : normalizedAdminText(seo.description, ADMIN_SEO_LIMIT, true);
+  if ((seo.title !== null && seoTitle === null) || (seo.description !== null && seoDescription === null)) {
+    return null;
+  }
+  const productTime = Date.parse(admin.product.updatedAt);
+  if (!Number.isFinite(productTime)) return null;
+  let latestInventoryUpdatedAt: string | null = null;
+  let latestInventoryTime = Number.NEGATIVE_INFINITY;
+  for (const variant of admin.product.variants) {
+    const timestamp = variant.inventoryItem.updatedAt;
+    const time = Date.parse(timestamp);
+    if (!Number.isFinite(time)) return null;
+    if (time > latestInventoryTime) {
+      latestInventoryTime = time;
+      latestInventoryUpdatedAt = timestamp;
+    }
+  }
+  if (latestInventoryUpdatedAt === null) return null;
+  return {
+    title,
+    descriptionHtml,
+    seoTitle,
+    seoDescription,
+    productUpdatedAt: admin.product.updatedAt,
+    latestInventoryUpdatedAt,
+  };
 }
 
 export async function scanEvidenceBundle(
   directory: string,
   productId: string,
   dependencies: CombinedScanDependencies = defaultDependencies,
+  options: CombinedScanOptions = {},
 ): Promise<CombinedScanResult> {
   assertShopifyProductGid(productId);
   const config = await dependencies.readConfig(directory);
@@ -163,6 +235,7 @@ export async function scanEvidenceBundle(
   let jsonLdReason: BundleReasonCode | null = null;
   let ajaxVariantCount = 0;
   let ajaxMatched = 0;
+  let ajaxProduct: AjaxNormalizedProduct | null = null;
   let htmlText: string | null = null;
   let canonicalPresent = false;
   let jsonLdPresence: 'present' | 'absent' | 'unknown' = 'unknown';
@@ -195,6 +268,7 @@ export async function scanEvidenceBundle(
           const normalized = normalizeAjaxProduct(ajaxFetch.body);
           if (!normalized.ok) ajaxReason = reason(normalized.reasonCode);
           else {
+            ajaxProduct = normalized.product;
             ajaxVariantCount = normalized.product.variants.length;
             const match = matchAjax(productId, ajaxTarget.handle, admin, normalized.product);
             ajaxReason = match.reasonCode;
@@ -231,12 +305,24 @@ export async function scanEvidenceBundle(
     }
   }
 
+  let browserEvidence: BrowserEvidence | null = null;
+  let browserReason: BundleReasonCode | null = null;
+  if (options.browser) {
+    if (admin.product.onlineStoreUrl === null) browserReason = 'not_published_to_online_store';
+    else if (ajaxProduct === null || ajaxReason !== null) browserReason = 'browser_prerequisite_unavailable';
+    else {
+      browserEvidence = await dependencies.collectBrowser(admin, ajaxProduct, options.cartAdd === true);
+      browserReason = reason(browserEvidence.reasonCode);
+      inputs.push({ source: 'browser', relativePath: 'browser.json', mediaType: 'application/json', contents: JSON.stringify(browserEvidence, null, 2) + '\n' });
+    }
+  }
+
   const artifacts = inputs.map(describeBundleArtifact);
   const completedAt = dependencies.now().toISOString();
   const window = { startedAt, completedAt };
   const envelope = (
     sourceReason: BundleReasonCode | null,
-    source: 'admin' | 'ajax' | 'html' | 'jsonld',
+    source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser',
     itemCount: number,
     fetch: AjaxFetchResult | null = null,
   ) => ({
@@ -248,13 +334,7 @@ export async function scanEvidenceBundle(
     status: fetch?.status ?? null,
     contentType: fetch?.contentType ?? null,
   });
-  const bundle = productEvidenceBundleSchema.parse({
-    schemaVersion: 1,
-    runId,
-    productId,
-    collectionStatus: [ajaxReason, htmlReason, jsonLdReason].every(value => value === null) ? 'complete' : 'partial',
-    observationWindow: window,
-    sources: {
+  const sources = {
       admin: envelope(null, 'admin', admin.product.variants.length),
       ajax: envelope(ajaxReason, 'ajax', ajaxVariantCount, ajaxFetch),
       html: envelope(htmlReason, 'html', htmlText === null ? 0 : 1, htmlFetch),
@@ -265,13 +345,56 @@ export async function scanEvidenceBundle(
         validBlockCount: validJsonLdBlocks,
         claims,
       },
-    },
+      ...(options.browser ? { browser: envelope(browserReason, 'browser', browserEvidence?.observations.length ?? 0) } : {}),
+    };
+  const bundle = productEvidenceBundleSchema.parse({
+    schemaVersion: options.browser ? 2 : 1,
+    runId,
+    productId,
+    collectionStatus: [ajaxReason, htmlReason, jsonLdReason, ...(options.browser ? [browserReason] : [])].every(value => value === null) ? 'complete' : 'partial',
+    observationWindow: window,
+    sources,
     artifacts,
-    limitations: [
+    limitations: options.browser ? [
+      'Dawn-compatible product forms, one storefront locale/market, and ordinary physical variants only.',
+      'Browser verdicts describe this CLI host and observation window, not every shopper context.',
+      'Checkout, account, payment, third-party requests, and persistent browser state are blocked.',
+    ] : [
       'Collection-only evidence; no availability contradiction, score, incident, or remediation is asserted.',
       'Public observations are cookieless requests from this CLI host and network context.',
       'HTML is not rendered and scripts are never executed; JSON-LD is parsed as inline data only.',
     ],
   });
-  return { bundle: await dependencies.saveBundle(directory, config.shop, productId, runId, inputs, bundle) };
+  const saved = await dependencies.saveBundle(directory, config.shop, productId, runId, inputs, bundle);
+  if (!options.browser) return { bundle: saved };
+  const evaluations: RuleEvaluation[] = [];
+  const matches = [];
+  for (const variant of admin.product.variants) {
+    const claim = claims.find(value => value.matchedLegacyVariantId === variant.legacyResourceId) ?? null;
+    const diagnostic = evaluateVariantDiagnostics({
+      admin, variantId: variant.id, evidenceRunId: runId, evaluatedAt: completedAt,
+      jsonLd: {
+        sourceOutcome: jsonLdReason === null ? 'observed' : 'inconclusive',
+        reference: claim === null ? null : { source: 'jsonld', legacyVariantId: claim.matchedLegacyVariantId, sku: claim.sku, selectedOptions: null },
+        claimKind: claim?.kind ?? null, availabilityCanonical: claim?.availabilityCanonical ?? null,
+        coherentClaimCount: claims.filter(value => value.matchedLegacyVariantId === variant.legacyResourceId).length,
+      },
+      browser: browserEvidence?.observations.find(value => value.requestedVariantId === variant.id) ?? null,
+    });
+    evaluations.push(...diagnostic.evaluations); matches.push(...diagnostic.matches);
+  }
+  const readiness = scoreInventorySearchReadiness({
+    evaluations, matches,
+    structuredData: {
+      sourceOutcome: jsonLdReason === null ? 'observed' : 'inconclusive', presence: jsonLdPresence,
+      malformedBlockCount: jsonLdReason === 'malformed_jsonld' ? 1 : 0,
+      variantOfferCount: claims.filter(value => value.kind === 'Offer' && value.matchedLegacyVariantId !== null).length,
+      supportedAvailabilityCount: claims.filter(value => value.kind === 'Offer' && value.matchedLegacyVariantId !== null && value.availabilityCanonical !== null).length,
+    },
+    adminContent: adminContentForReadiness(admin),
+  });
+  await dependencies.persistDiagnostics(directory, config.shop, productId, {
+    evidenceRunId: runId, evaluatedAt: completedAt, evaluations, readiness,
+  });
+  return { bundle: saved, evaluations, readinessTotal: readiness.total };
 }

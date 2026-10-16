@@ -43,7 +43,7 @@ export type EvidenceRunMetadata = {
   startedAt: string;
   completedAt: string;
   sources: Array<{
-    source: 'admin' | 'ajax' | 'html' | 'jsonld';
+    source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser';
     outcome: 'observed' | 'inconclusive';
     reasonCode: string | null;
     status: number | null;
@@ -51,7 +51,7 @@ export type EvidenceRunMetadata = {
     itemCount: number;
   }>;
   artifacts: Array<{
-    source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'bundle';
+    source: 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser' | 'bundle';
     relativePath: string;
     mediaType: string;
     sha256: string;
@@ -404,6 +404,45 @@ const migrations: Migration[] = [
     CREATE INDEX IF NOT EXISTS rule_evaluations_run ON rule_evaluations(evidence_run_id);
     CREATE INDEX IF NOT EXISTS incidents_status ON incidents(status, product_id);
     CREATE INDEX IF NOT EXISTS regression_tests_enabled ON regression_tests(enabled, product_id);
+  `,
+  `
+    CREATE TABLE evidence_sources_v2 (
+      run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('admin', 'ajax', 'html', 'jsonld', 'browser')),
+      outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'inconclusive')),
+      reason_code TEXT,
+      http_status INTEGER,
+      content_type TEXT,
+      item_count INTEGER NOT NULL,
+      PRIMARY KEY (run_id, source)
+    );
+
+    INSERT INTO evidence_sources_v2 (
+      run_id, source, outcome, reason_code, http_status, content_type, item_count
+    ) SELECT
+      run_id, source, outcome, reason_code, http_status, content_type, item_count
+    FROM evidence_sources;
+
+    CREATE TABLE evidence_artifacts_v2 (
+      run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('admin', 'ajax', 'html', 'jsonld', 'browser', 'bundle')),
+      relative_path TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      PRIMARY KEY (run_id, relative_path)
+    );
+
+    INSERT INTO evidence_artifacts_v2 (
+      run_id, source, relative_path, media_type, sha256, bytes
+    ) SELECT
+      run_id, source, relative_path, media_type, sha256, bytes
+    FROM evidence_artifacts;
+
+    DROP TABLE evidence_sources;
+    DROP TABLE evidence_artifacts;
+    ALTER TABLE evidence_sources_v2 RENAME TO evidence_sources;
+    ALTER TABLE evidence_artifacts_v2 RENAME TO evidence_artifacts;
   `,
 ];
 

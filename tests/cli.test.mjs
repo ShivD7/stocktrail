@@ -43,6 +43,10 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     );
     assert.match(run('doctor', '--admin').stderr, /only supported with scan/);
     assert.match(run('doctor', '--ajax').stderr, /only supported with scan/);
+    assert.match(run('doctor', '--browser').stderr, /only supported with scan or test/);
+    assert.match(run('scan', '--cart-add').stderr, /requires --browser/);
+    assert.match(run('test', '--cart-add').stderr, /requires --browser/);
+    assert.match(run('scan', '--demo', '--browser').stderr, /only supported with the combined scan/);
     assert.match(run('import').stderr, /No local configuration/);
     assert.match(run('import', '--preview', '--limit', '0').stderr, /whole number from 1 to 250/);
     assert.match(run('import', '--preview', '--limit', 'five').stderr, /whole number from 1 to 250/);

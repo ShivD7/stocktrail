@@ -60,7 +60,7 @@ export async function writeBundleRun(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
     throw new Error('Invalid evidence run identifier.');
   }
-  const allowed = new Set(['admin.json', 'ajax.json', 'html.html', 'jsonld.json']);
+  const allowed = new Set(['admin.json', 'ajax.json', 'html.html', 'jsonld.json', 'browser.json']);
   if (inputs.some(input => !allowed.has(input.relativePath) || input.relativePath.includes('..') ||
       input.relativePath.includes('/') || input.relativePath.includes('\\'))) {
     throw new Error('Invalid evidence artifact path.');

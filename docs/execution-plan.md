@@ -356,7 +356,7 @@ Current implementation note: the combined `scan --product-id <gid>` command now 
 
 ### Week 3 — October 17–23: deterministic detective
 
-Current implementation note: the pure Phase 3 core now includes strict variant identity, Admin purchasability derivation, ST-001 through ST-003, weighted readiness scoring, incident and data-assertion persistence, an injected regression runner, and synthetic broken/corrected Dawn evidence. The ordinary live scan remains collection-only until the browser runtime and its network-safety adapter are approved and integrated; stored live tests therefore report explicit inconclusive results rather than fabricated passes.
+Current implementation note: the Phase 3 core and approved Playwright integration are implemented. `scan --browser --product-id <gid>` adds isolated Dawn evidence, evaluates ST-001 through ST-003, calculates the full 30/25/20/15/10 readiness score from fresh normalized Admin content and timestamps, and persists incidents and regression assertions. Missing or invalid Admin content makes only the dependent components inconclusive and is never printed. `--cart-add` is the explicit mutation opt-in; checkout remains blocked. `test --browser` reruns stored assertions from fresh evidence, while plain `test` retains its safe inconclusive behavior for browser-dependent assertions.
 
 - Implement strict variant matching.
 - Implement ST-001, ST-002, and ST-003.

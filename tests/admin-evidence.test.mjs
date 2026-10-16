@@ -34,6 +34,10 @@ function variant(id, overrides = {}) {
 function product(nodes, pageInfo, overrides = {}) {
   return {
     id: productId,
+    title: 'Private synthetic product title',
+    handle: 'synthetic',
+    descriptionHtml: '<p>Private synthetic product description.</p>',
+    seo: { title: 'Private SEO title', description: 'Private SEO description.' },
     status: 'ACTIVE',
     onlineStoreUrl: 'https://example.invalid/products/synthetic',
     updatedAt: '2026-10-15T11:00:00.000Z',
@@ -81,6 +85,9 @@ test('reads complete Admin evidence with the bounded content fields required for
   assert.deepEqual(report.apiVersion, { requested: '2026-10', response: '2026-10' });
   assert.equal(report.pageCount, 1);
   assert.equal(report.complete, true);
+  assert.equal(report.product.title, 'Private synthetic product title');
+  assert.equal(report.product.descriptionHtml, '<p>Private synthetic product description.</p>');
+  assert.deepEqual(report.product.seo, { title: 'Private SEO title', description: 'Private SEO description.' });
   assert.equal(report.product.variants.length, 1);
   assert.match(report.limitations.join(' '), /Admin API evidence only/);
   assert.doesNotMatch(JSON.stringify(report), /request.?id|query.?cost|synthetic-credential/i);

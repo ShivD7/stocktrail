@@ -17,10 +17,13 @@ npm run dev -- import
 npm run dev -- monitor candidates
 npm run dev -- monitor list
 npm run dev -- scan --product-id gid://shopify/Product/123
+npm run dev -- scan --browser --product-id gid://shopify/Product/123
+npm run dev -- scan --browser --cart-add --product-id gid://shopify/Product/123
 npm run dev -- scan --admin --product-id gid://shopify/Product/123
 npm run dev -- scan --ajax --product-id gid://shopify/Product/123
 npm run dev -- scan --demo
 npm run dev -- test
+npm run dev -- test --browser
 ```
 
 The demo uses two synthetic products, prints one FAIL and one PASS, and saves a JSON evidence report under `.stocktrail/reports`. It makes no network requests. A diagnostic contradiction exits with code **2**; command/configuration errors exit with **1**; success exits with **0**.
@@ -41,7 +44,9 @@ After an import, use `monitor candidates` to show active local Shopify product G
 
 `scan --product-id <gid>` is the combined Phase 2 collection command. It validates eligibility once, reads fresh Admin evidence once, and collects cookieless Ajax JSON plus product HTML derived only from the fresh Online Store URL. Inline JSON-LD is tokenized and parsed without executing scripts or following discovered URLs. The run is staged privately and atomically published beneath the local evidence-artifact area; SQLite stores only product-linked integrity and index metadata. A public-source failure produces a partial bundle and still exits successfully, while eligibility, Admin, or secure-storage failures exit with an error. Terminal output contains aggregate source outcomes only. This command collects evidence—it does not declare PASS/FAIL, detect contradictions, score incidents, or recommend remediation.
 
-The Phase 3 deterministic core is implemented separately from the live scan: strict ID/SKU/options matching, Admin purchasability derivation, ST-001 through ST-003, the weighted Inventory Search Readiness diagnostic, incident lifecycle persistence, and data-only regression assertions. Synthetic Dawn fixtures exercise broken and corrected states offline. Until the approved browser runtime is integrated, `stocktrail test` never fabricates a browser result: stored live assertions are reported explicitly as inconclusive and exit with code **3**. A remaining contradiction exits with **2**, an operational error with **1**, and an all-pass or empty test run with **0**.
+Add `--browser` to a combined scan to collect rendered Dawn storefront evidence in Playwright and run ST-001 through ST-003. Each variant uses a fresh, nonpersistent Chromium context. StockTrail verifies the exact product, variant, single visible product form, and single visible add control; ambiguous or unsupported pages are inconclusive. DNS is checked against private and reserved networks, navigation is pinned to a validated public address, third-party requests and WebSockets are blocked, and checkout/account/payment routes are always blocked. The normal browser scan observes control state only. `--cart-add` is the explicit authorization for an isolated add-to-cart probe; it requires an initially empty cart and always attempts verified cleanup. Checkout is never attempted.
+
+Browser scans save a version 2 evidence bundle, deterministic rule evaluations, incident lifecycle updates, regression assertions, and the weighted Inventory Search Readiness diagnostic. The 30/25/20/15/10 score uses fresh normalized Admin title, description, SEO, product-update, and latest inventory-update evidence for inventory-promise clarity and stale-claim safety; missing or invalid content makes those components explicitly inconclusive. Product content is never printed—the terminal remains aggregate-only. `stocktrail test --browser` reruns stored assertions with fresh evidence; add `--cart-add` only when that mutation is intended. Plain `stocktrail test` preserves the safe non-browser behavior and reports browser-dependent assertions as inconclusive. A contradiction exits with **2**, an inconclusive browser run with **3**, an operational error with **1**, and an all-pass or empty run with **0**. Scope remains Dawn-compatible product forms, one locale/market, and ordinary physical variants.
 
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Read-only Admin import and evidence commands retrieve this credential through the Shopify adapter; it is never sent to the public Ajax endpoint.
 
@@ -78,10 +83,10 @@ npm run build
 
 ## Next implementation work
 
-1. Integrate approved Dawn browser evidence into the live bundle and diagnostic pipeline.
-2. Feed fresh live diagnostic evaluations into the existing incident and regression-test repositories.
-3. Add broader browser contexts, polling, and a localhost dashboard only when needed.
+1. Add broader theme adapters and explicit market/locale contexts.
+2. Add polling and a localhost dashboard only when needed.
+3. Add remediation previews after the diagnostic workflow is stable.
 
-The combined scan is collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.
+The combined scan without `--browser` remains collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.
 
 The previous Shopify web-app scaffold and its backup have been removed, as recorded in `docs/migration.md`. Local conversion does not delete or modify any existing registration in Shopify. The local CLI authenticates directly to the configured shop; it does not run inside Shopify Admin.

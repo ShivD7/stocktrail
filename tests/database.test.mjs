@@ -200,7 +200,7 @@ test('migration version and persisted schema contain no private transport column
       SELECT sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL
     `).all().map(row => row.sql).join('\n');
     database.close();
-    assert.equal(version, 5);
+    assert.equal(version, 6);
     assert.doesNotMatch(tables, /token|credential|request.?id|header|raw.?response|query.?cost/i);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -257,7 +257,7 @@ test('legacy migrations preserve catalog rows and monitoring relationships with 
         { observed_at: null, evidence_source: null, api_version: null },
       );
       assert.equal(legacyVariant.sellable_online_quantity, null);
-      assert.equal(inspection.prepare('PRAGMA user_version').get().user_version, 5);
+      assert.equal(inspection.prepare('PRAGMA user_version').get().user_version, 6);
     } finally {
       inspection.close();
     }

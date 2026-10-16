@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { canonicalUtcTimestampSchema } from './catalog.js';
 import { shopifyProductGidSchema } from './admin-evidence.js';
 
-export const bundleSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld']);
-export const bundleArtifactSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld', 'bundle']);
+export const bundleSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld', 'browser']);
+export const bundleArtifactSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld', 'browser', 'bundle']);
 export const bundleOutcomeSchema = z.enum(['observed', 'inconclusive']);
 export const bundleReasonCodeSchema = z.enum([
   'not_published_to_online_store', 'invalid_online_store_url', 'dns_resolution_failed',
@@ -15,6 +15,12 @@ export const bundleReasonCodeSchema = z.enum([
   'duplicate_ajax_variant_id', 'missing_ajax_variant', 'unexpected_ajax_variant',
   'variant_limit_exceeded', 'html_budget_exceeded', 'malformed_jsonld',
   'jsonld_budget_exceeded', 'html_unavailable',
+  'browser_unavailable', 'navigation_failed', 'rate_limited', 'password_or_challenge',
+  'browser_prerequisite_unavailable',
+  'product_identity_mismatch', 'variant_identity_mismatch', 'missing_product_form',
+  'ambiguous_product_form', 'missing_add_control', 'ambiguous_add_control',
+  'obscured_add_control', 'selection_failed', 'unsupported_cart_probe', 'cart_not_empty',
+  'cart_response_mismatch', 'cart_verification_failed', 'cart_cleanup_failed',
 ]);
 
 const observationWindowSchema = z.object({
@@ -24,7 +30,7 @@ const observationWindowSchema = z.object({
 
 export const bundleArtifactSchema = z.object({
   source: bundleArtifactSourceSchema,
-  relativePath: z.enum(['admin.json', 'ajax.json', 'html.html', 'jsonld.json', 'bundle.json']),
+  relativePath: z.enum(['admin.json', 'ajax.json', 'html.html', 'jsonld.json', 'browser.json', 'bundle.json']),
   mediaType: z.enum(['application/json', 'text/html']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   bytes: z.number().int().nonnegative(),
@@ -64,7 +70,7 @@ export const jsonLdClaimSchema = z.object({
   matchedLegacyVariantId: z.string().nullable(),
 });
 
-export const productEvidenceBundleSchema = z.object({
+export const productEvidenceBundleV1Schema = z.object({
   schemaVersion: z.literal(1),
   runId: z.string().uuid(),
   productId: shopifyProductGidSchema,
@@ -84,6 +90,11 @@ export const productEvidenceBundleSchema = z.object({
   artifacts: z.array(bundleArtifactSchema),
   limitations: z.array(z.string().min(1)).min(1),
 });
+export const productEvidenceBundleV2Schema = productEvidenceBundleV1Schema.extend({
+  schemaVersion: z.literal(2),
+  sources: productEvidenceBundleV1Schema.shape.sources.extend({ browser: sourceEnvelopeSchema }),
+});
+export const productEvidenceBundleSchema = z.union([productEvidenceBundleV1Schema, productEvidenceBundleV2Schema]);
 
 export type BundleSource = z.infer<typeof bundleSourceSchema>;
 export type BundleArtifactSource = z.infer<typeof bundleArtifactSourceSchema>;

@@ -13,7 +13,7 @@ import { scanAjaxEvidence } from '../../../packages/agent/src/ajax-scan.js';
 import { formatAjaxScan } from './ajax-output.js';
 import { scanEvidenceBundle } from '../../../packages/agent/src/combined-scan.js';
 import { formatEvidenceBundle } from './bundle-output.js';
-import { runStoredRegressionTests } from '../../../packages/test-runner/src/index.js';
+import { runBrowserRegressionTests, runStoredRegressionTests } from '../../../packages/test-runner/src/index.js';
 import { formatStoredTestRun } from './test-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
@@ -26,10 +26,12 @@ Usage: stocktrail <command> [options]
   logout                                Delete the stored Shopify token
   doctor                                Check local setup (offline)
   scan --demo                           Run synthetic diagnostics and save evidence
-  test                                  Rerun stored deterministic assertions
+  test                                  Report stored assertions without live browser evidence
+  test --browser [--cart-add]           Rerun stored assertions with fresh browser evidence
   scan --admin --product-id <gid>       Save Admin-only evidence for a monitored product
   scan --ajax --product-id <gid>        Save cookieless Ajax evidence for a monitored product
   scan --product-id <gid>               Save combined Admin, storefront, and JSON-LD evidence
+  scan --browser --product-id <gid>     Add isolated Dawn browser evidence and diagnostics
   import [--limit 250]                  Import products into the local database
   import --preview [--limit 5]          Read and summarize products without saving them
   monitor list                          Show aggregate monitoring selection status
@@ -46,8 +48,8 @@ Import preview is read-only and writes no catalog or evidence files.
 Persistent import writes only to the local StockTrail database and never modifies Shopify.
 Admin-only evidence is not a storefront availability verdict.
 Ajax evidence is a cookieless observation from this CLI host, not a universal shopper verdict.
-Combined evidence is collection-only and does not assert an availability verdict.
-Full browser, cart, and checkout scans are not implemented yet. No store changes are made.`;
+Combined evidence without --browser remains collection-only.
+Browser scans use fresh isolated contexts. Cart submission requires --cart-add; checkout is always blocked.`;
 
 async function promptForToken(): Promise<string> {
   const input = process.stdin;
@@ -92,6 +94,7 @@ async function main() {
       help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
       shop: { type: 'string' }, demo: { type: 'boolean' }, admin: { type: 'boolean' }, ajax: { type: 'boolean' },
       preview: { type: 'boolean' }, limit: { type: 'string' },
+      browser: { type: 'boolean' }, 'cart-add': { type: 'boolean' },
       'product-id': { type: 'string' },
     },
   });
@@ -103,6 +106,13 @@ async function main() {
   if (values.demo !== undefined && command !== 'scan') throw new Error('--demo is only supported with scan.');
   if (values.admin !== undefined && command !== 'scan') throw new Error('--admin is only supported with scan.');
   if (values.ajax !== undefined && command !== 'scan') throw new Error('--ajax is only supported with scan.');
+  if (values.browser !== undefined && command !== 'scan' && command !== 'test') {
+    throw new Error('--browser is only supported with scan or test.');
+  }
+  if (values['cart-add'] !== undefined && command !== 'scan' && command !== 'test') {
+    throw new Error('--cart-add is only supported with scan or test.');
+  }
+  if (values['cart-add'] && !values.browser) throw new Error('--cart-add requires --browser.');
   if (values.preview !== undefined && command !== 'import') throw new Error('--preview is only supported with import.');
   if (values.limit !== undefined && command !== 'import') throw new Error('--limit is only supported with import.');
   if (values['product-id'] !== undefined && command !== 'monitor' && command !== 'scan') {
@@ -149,6 +159,9 @@ async function main() {
     case 'scan': {
       const scanModes = [values.demo, values.admin, values.ajax].filter(Boolean).length;
       if (scanModes > 1) throw new Error('Use exactly one of scan --demo, scan --admin, or scan --ajax.');
+      if (values.browser && scanModes > 0) {
+        throw new Error('--browser is only supported with the combined scan.');
+      }
       if (values.demo) {
         if (values['product-id'] !== undefined) {
           throw new Error('--product-id cannot be combined with scan --demo.');
@@ -182,12 +195,21 @@ async function main() {
       if (values['product-id'] === undefined) {
         throw new Error('--product-id is required for a combined scan, or choose scan --admin, scan --ajax, or scan --demo.');
       }
-      const result = await scanEvidenceBundle(directory, values['product-id']);
+      const result = await scanEvidenceBundle(
+        directory,
+        values['product-id'],
+        undefined,
+        { browser: values.browser === true, cartAdd: values['cart-add'] === true },
+      );
       for (const line of formatEvidenceBundle(result)) console.log(line);
+      if (result.evaluations?.some(value => value.result === 'fail')) process.exitCode = 2;
+      else if (result.evaluations?.some(value => value.result === 'inconclusive')) process.exitCode = 3;
       return;
     }
     case 'test': {
-      const result = await runStoredRegressionTests(directory);
+      const result = values.browser
+        ? await runBrowserRegressionTests(directory, values['cart-add'] === true)
+        : await runStoredRegressionTests(directory);
       for (const line of formatStoredTestRun(result)) console.log(line);
       if (result.summary?.status === 'failed') process.exitCode = 2;
       else if (result.summary?.status === 'inconclusive') process.exitCode = 3;

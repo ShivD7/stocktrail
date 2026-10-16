@@ -61,7 +61,7 @@ test('atomically persists a private bundle and indexes only integrity metadata',
 
     const database = new DatabaseSync(join(directory, 'stocktrail.sqlite'), { readOnly: true });
     try {
-      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 5);
+      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 6);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_runs').get().count, 1);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_sources').get().count, 4);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_artifacts').get().count, 2);
@@ -87,6 +87,44 @@ test('removes only the current final directory when metadata insertion fails', a
     );
     assert.deepEqual(await readdir(join(directory, 'artifacts', 'scans')), []);
     assert.deepEqual(await readdir(join(directory, 'artifacts', '.staging')), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('persists version 2 browser artifacts through the forward-compatible database schema', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'stocktrail-browser-bundle-'));
+  const runId = '123e4567-e89b-42d3-a456-426614174003';
+  const browserInput = {
+    source: 'browser', relativePath: 'browser.json', mediaType: 'application/json',
+    contents: '{"source":"browser","safe":true}\n',
+  };
+  try {
+    const repository = await openCatalogRepository(directory);
+    repository.importCatalog(shop, [product()], true, provenance);
+    repository.addMonitoredProduct(shop, productId);
+    repository.close();
+
+    const base = bundle(runId);
+    const browserArtifact = describeBundleArtifact(browserInput);
+    const browserSource = {
+      outcome: 'observed', reasonCode: null, observationWindow: base.observationWindow,
+      artifactRefs: [browserArtifact], itemCount: 1, status: null, contentType: null,
+    };
+    const version2 = {
+      ...base, schemaVersion: 2,
+      sources: { ...base.sources, browser: browserSource },
+      artifacts: [...base.artifacts, browserArtifact],
+    };
+    await saveEvidenceBundle(directory, shop, productId, runId, [...inputs, browserInput], version2);
+
+    const finalDirectory = join(directory, 'artifacts', 'scans', runId);
+    assert.deepEqual((await readdir(finalDirectory)).sort(), ['admin.json', 'browser.json', 'bundle.json']);
+    const database = new DatabaseSync(join(directory, 'stocktrail.sqlite'), { readOnly: true });
+    try {
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evidence_sources WHERE source = 'browser'").get().count, 1);
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evidence_artifacts WHERE source = 'browser'").get().count, 1);
+    } finally { database.close(); }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
