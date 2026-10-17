@@ -8,13 +8,16 @@ import type {
   DashboardIncidentDetail,
   DashboardIncidentSummary,
   DashboardOverview,
+  DashboardRerunResult,
 } from '../../packages/shared/src/dashboard.js';
+import { runBrowserRegressionTests } from '../../packages/test-runner/src/index.js';
 
 export type DashboardDataSource = {
   overview(): Promise<DashboardOverview>;
   incidents(status?: 'open' | 'resolved' | 'ignored'): Promise<DashboardIncidentSummary[]>;
   incident(id: string): Promise<DashboardIncidentDetail | null>;
   evidence(runId: string, artifact: EvidenceArtifactName): Promise<DashboardEvidence | null>;
+  rerun(): Promise<DashboardRerunResult>;
 };
 
 type EvidenceArtifactName = 'admin.json' | 'ajax.json' | 'html.html' | 'jsonld.json' | 'browser.json';
@@ -28,6 +31,7 @@ export type DashboardServer = {
 const staticRoot = join(dirname(fileURLToPath(import.meta.url)), 'client');
 
 export function createDashboardDataSource(directory: string, shop: string | null): DashboardDataSource {
+  let rerunInProgress = false;
   return {
     async overview() {
       const repository = await openCatalogRepository(directory);
@@ -60,6 +64,21 @@ export function createDashboardDataSource(directory: string, shop: string | null
         throw new Error('Evidence artifact integrity check failed.');
       }
       return { body, mediaType: indexed.mediaType, filename: artifact };
+    },
+    async rerun() {
+      if (rerunInProgress) throw new Error('A dashboard rerun is already in progress.');
+      rerunInProgress = true;
+      try {
+        const result = await runBrowserRegressionTests(directory, false);
+        return result.summary ? {
+          status: result.summary.status,
+          passed: result.summary.passed,
+          failed: result.summary.failed,
+          inconclusive: result.summary.inconclusive,
+        } : { status: 'no_tests', passed: 0, failed: 0, inconclusive: 0 };
+      } finally {
+        rerunInProgress = false;
+      }
     },
   };
 }
@@ -137,12 +156,21 @@ async function routeRequest(
     sendJson(response, 403, { error: 'invalid_host' });
     return;
   }
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  if (request.method === 'POST' && url.pathname === '/api/tests/rerun') {
+    const expectedOrigin = `http://${request.headers.host}`;
+    if (request.headers.origin !== expectedOrigin) {
+      sendJson(response, 403, { error: 'invalid_origin' });
+      return;
+    }
+    sendJson(response, 200, await data.rerun());
+    return;
+  }
   if (request.method !== 'GET') {
     response.setHeader('Allow', 'GET');
     sendJson(response, 405, { error: 'method_not_allowed' });
     return;
   }
-  const url = new URL(request.url ?? '/', 'http://localhost');
   if (!url.pathname.startsWith('/api/') && await sendStatic(response, url.pathname)) return;
   const evidenceMatch = /^\/api\/evidence\/([0-9a-f-]+)\/(admin\.json|ajax\.json|html\.html|jsonld\.json|browser\.json)$/.exec(url.pathname);
   if (evidenceMatch) {

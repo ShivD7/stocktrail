@@ -65,8 +65,16 @@ export const dashboardIncidentDetailSchema = dashboardIncidentSummarySchema.exte
   testHistory: z.array(dashboardTestHistorySchema),
 });
 
+export const dashboardRerunResultSchema = z.object({
+  status: z.enum(['no_tests', 'passed', 'failed', 'inconclusive']),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  inconclusive: z.number().int().nonnegative(),
+});
+
 export type DashboardOverview = z.infer<typeof dashboardOverviewSchema>;
 export type DashboardIncidentSummary = z.infer<typeof dashboardIncidentSummarySchema>;
 export type DashboardIncidentDetail = z.infer<typeof dashboardIncidentDetailSchema>;
 export type DashboardSourceEvidence = z.infer<typeof dashboardSourceEvidenceSchema>;
 export type DashboardTestHistory = z.infer<typeof dashboardTestHistorySchema>;
+export type DashboardRerunResult = z.infer<typeof dashboardRerunResultSchema>;

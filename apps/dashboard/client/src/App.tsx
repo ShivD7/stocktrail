@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DashboardOverview } from '../../../../packages/shared/src/dashboard.js';
 import { Incidents } from './Incidents.js';
 import { IncidentDetailView } from './IncidentDetail.js';
+import { RerunButton } from './RerunButton.js';
 
 type Route = 'overview' | 'incidents' | 'connection';
 
@@ -37,7 +38,7 @@ function MetricCard(props: { label: string; value: number | string; note: string
   );
 }
 
-function Overview({ data }: { data: DashboardOverview }) {
+function Overview({ data, onRerun }: { data: DashboardOverview; onRerun: () => void }) {
   const hasOpenIncidents = data.incidents.open > 0;
   return (
     <>
@@ -47,7 +48,7 @@ function Overview({ data }: { data: DashboardOverview }) {
           <h1>Overview</h1>
           <p className="page-intro">Follow inventory facts from Shopify to the product page and search data.</p>
         </div>
-        <a className="primary-action" href="#/incidents">Review incidents <span aria-hidden="true">→</span></a>
+        <RerunButton label="Scan now" onComplete={onRerun} />
       </section>
 
       <section className="metrics" aria-label="Store summary">
@@ -109,7 +110,7 @@ function Placeholder({ route }: { route: Exclude<Route, 'overview'> }) {
   );
 }
 
-function AppShell({ data }: { data: DashboardOverview }) {
+function AppShell({ data, onRerun }: { data: DashboardOverview; onRerun: () => void }) {
   const route = useRoute();
   const detailMatch = /^#\/incidents\/([0-9a-f-]+)$/.exec(window.location.hash);
   return (
@@ -131,7 +132,7 @@ function AppShell({ data }: { data: DashboardOverview }) {
         </div>
       </aside>
       <main id="main-content" tabIndex={-1}>
-        {route === 'overview' ? <Overview data={data} />
+        {route === 'overview' ? <Overview data={data} onRerun={onRerun} />
           : route === 'incidents' && detailMatch?.[1] ? <IncidentDetailView incidentId={detailMatch[1]} />
             : route === 'incidents' ? <Incidents /> : <Placeholder route={route} />}
       </main>
@@ -142,6 +143,7 @@ function AppShell({ data }: { data: DashboardOverview }) {
 export function App() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [error, setError] = useState(false);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -153,7 +155,7 @@ export function App() {
       .then(setOverview)
       .catch(value => { if (value?.name !== 'AbortError') setError(true); });
     return () => controller.abort();
-  }, []);
+  }, [revision]);
 
   if (error) {
     return <main className="centered-state"><p className="eyebrow">Local service</p><h1>Dashboard unavailable</h1><p role="alert">StockTrail could not read the local dashboard data. Restart the command and try again.</p></main>;
@@ -161,5 +163,5 @@ export function App() {
   if (!overview) {
     return <main className="centered-state" aria-busy="true"><span className="loader" aria-hidden="true" /><p role="status">Loading local evidence…</p></main>;
   }
-  return <AppShell data={overview} />;
+  return <AppShell data={overview} onRerun={() => setRevision(value => value + 1)} />;
 }

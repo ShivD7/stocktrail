@@ -42,8 +42,12 @@ main { min-width: 0; padding: clamp(2rem, 5vw, 5rem); }
 .page-heading h1, .centered-state h1 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 6vw, 5.6rem); font-weight: 500; letter-spacing: -0.055em; line-height: 0.95; }
 .eyebrow { margin: 0 0 0.85rem; color: #397454; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
 .page-intro { max-width: 38rem; margin: 1.25rem 0 0; color: var(--muted); font-size: 1.05rem; line-height: 1.65; }
-.primary-action { display: inline-flex; align-items: center; gap: 1rem; padding: 0.85rem 1.05rem; border-radius: 0.65rem; color: white; background: var(--forest); text-decoration: none; font-size: 0.9rem; font-weight: 750; white-space: nowrap; box-shadow: 0 10px 30px rgba(21,62,44,.14); }
+.primary-action { display: inline-flex; align-items: center; gap: 1rem; padding: 0.85rem 1.05rem; border: 0; border-radius: 0.65rem; color: white; background: var(--forest); text-decoration: none; font-size: 0.9rem; font-weight: 750; white-space: nowrap; box-shadow: 0 10px 30px rgba(21,62,44,.14); cursor: pointer; }
 .primary-action:hover { background: #20543d; transform: translateY(-1px); }
+.primary-action:disabled { cursor: wait; opacity: .68; transform: none; }
+.rerun-control { position: relative; display: grid; justify-items: end; gap: .5rem; }
+.action-message { max-width: 18rem; color: var(--muted); font-size: .72rem; line-height: 1.4; text-align: right; }
+.action-message--error { color: #9c3d24; }
 
 .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .metric-card { position: relative; overflow: hidden; display: grid; gap: 0.45rem; min-height: 11rem; padding: 1.3rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--surface); box-shadow: 0 10px 35px rgba(33,48,40,.04); }
@@ -114,6 +118,7 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
 .detail-kicker { display: flex; gap: .45rem; margin-bottom: 1rem; }
 .detail-hero h1, .detail-state h1 { max-width: 58rem; margin: 0; font-family: Georgia, serif; font-size: clamp(2.4rem, 5vw, 4.8rem); font-weight: 500; letter-spacing: -.05em; line-height: 1; }
 .detail-hero p { margin: 1rem 0 0; color: var(--muted); font-size: 1rem; }
+.detail-actions { display: flex; align-items: flex-start; gap: .65rem; }
 .secondary-action { display: inline-flex; gap: .5rem; align-items: center; width: fit-content; padding: .7rem .85rem; border: 1px solid #bbc8be; border-radius: .6rem; color: #285c42; background: white; font-size: .82rem; font-weight: 750; text-decoration: none; white-space: nowrap; }
 .secondary-action:hover { border-color: #57806a; background: #f7faf7; }
 .section-heading { margin-bottom: 1.1rem; }
@@ -169,6 +174,9 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
   .metric-card { min-height: 9rem; }
   .latest-scan { align-items: flex-start; }
   .detail-hero { display: grid; margin-bottom: 2.5rem; }
+  .detail-actions { flex-wrap: wrap; }
+  .rerun-control { justify-items: start; }
+  .action-message { text-align: left; }
   .perspective-grid, .detail-grid { grid-template-columns: 1fr; }
   .perspective { min-height: 11rem; }
   .history-card li { grid-template-columns: 1fr; gap: .4rem; }

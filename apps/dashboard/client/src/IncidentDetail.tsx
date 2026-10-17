@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DashboardIncidentDetail, DashboardSourceEvidence } from '../../../../packages/shared/src/dashboard.js';
+import { RerunButton } from './RerunButton.js';
 
 const explanations = {
   'ST-001': {
@@ -41,6 +42,7 @@ function formatDate(value: string): string {
 export function IncidentDetailView({ incidentId }: { incidentId: string }) {
   const [detail, setDetail] = useState<DashboardIncidentDetail | null>(null);
   const [error, setError] = useState<'not-found' | 'unavailable' | null>(null);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +55,7 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
       .then(value => { if (value) setDetail(value); })
       .catch(value => { if (value?.name !== 'AbortError') setError('unavailable'); });
     return () => controller.abort();
-  }, [incidentId]);
+  }, [incidentId, revision]);
 
   if (error) return (
     <div className="detail-state" role="alert">
@@ -78,7 +80,10 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
           <h1>{explanation.title}</h1>
           <p>{detail.productTitle} <span aria-hidden="true">·</span> {detail.variantLabel}</p>
         </div>
-        {detail.productUrl ? <a className="secondary-action" href={detail.productUrl} target="_blank" rel="noreferrer">Open product <span aria-hidden="true">↗</span></a> : null}
+        <div className="detail-actions">
+          {detail.productUrl ? <a className="secondary-action" href={detail.productUrl} target="_blank" rel="noreferrer">Open product <span aria-hidden="true">↗</span></a> : null}
+          <RerunButton label="Rerun test" onComplete={() => setRevision(value => value + 1)} />
+        </div>
       </section>
 
       <section aria-labelledby="comparison-title">

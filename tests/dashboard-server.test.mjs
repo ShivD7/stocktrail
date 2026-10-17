@@ -21,6 +21,7 @@ function source() {
         ? { body: Buffer.from('{"synthetic":true}'), mediaType: 'application/json', filename: artifact }
         : null;
     },
+    async rerun() { return { status: 'failed', passed: 1, failed: 1, inconclusive: 0 }; },
   };
 }
 
@@ -74,6 +75,12 @@ test('dashboard server rejects non-loopback host headers and mutations', async (
     const mutation = await fetch(`${server.url}/api/overview`, { method: 'POST' });
     assert.equal(mutation.status, 405);
     assert.equal(mutation.headers.get('allow'), 'GET');
+    const missingOrigin = await fetch(`${server.url}/api/tests/rerun`, { method: 'POST' });
+    assert.equal(missingOrigin.status, 403);
+    const rerun = await fetch(`${server.url}/api/tests/rerun`, {
+      method: 'POST', headers: { Origin: server.url },
+    });
+    assert.deepEqual(await rerun.json(), { status: 'failed', passed: 1, failed: 1, inconclusive: 0 });
   } finally {
     await server.close();
   }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   dashboardIncidentDetailSchema,
   dashboardOverviewSchema,
+  dashboardRerunResultSchema,
 } from '../dist/packages/shared/src/dashboard.js';
 
 test('dashboard overview accepts an empty local state', () => {
@@ -13,6 +14,13 @@ test('dashboard overview accepts an empty local state', () => {
     latestScan: null,
   });
   assert.equal(value.latestScan, null);
+});
+
+test('dashboard rerun results keep only aggregate test outcomes', () => {
+  assert.deepEqual(dashboardRerunResultSchema.parse({
+    status: 'failed', passed: 2, failed: 1, inconclusive: 0,
+  }), { status: 'failed', passed: 2, failed: 1, inconclusive: 0 });
+  assert.equal(dashboardRerunResultSchema.safeParse({ status: 'failed', failed: -1 }).success, false);
 });
 
 test('dashboard incident detail rejects non-local evidence paths', () => {
