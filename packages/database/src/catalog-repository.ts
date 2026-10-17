@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import {
@@ -13,6 +13,12 @@ import {
   type RuleEvaluation,
 } from '../../shared/src/diagnostics.js';
 import { readinessScoreSchema, type ReadinessScore } from '../../shared/src/readiness.js';
+import type {
+  ProposalArtifact,
+  ProposalKind,
+  ProposalStatus,
+  ProposalVerificationStatus,
+} from '../../shared/src/proposals.js';
 
 const DATABASE_FILE = 'stocktrail.sqlite';
 export const MONITORED_PRODUCT_LIMIT = 10;
@@ -87,6 +93,41 @@ export type RegressionTestRunSummary = {
   passed: number;
   failed: number;
   inconclusive: number;
+};
+
+export type LatestProposalEvidence = {
+  evidenceRunId: string;
+  completedAt: string;
+  adminArtifactSha256: string;
+  readiness: ReadinessScore;
+};
+
+export type ProposalArtifactIndex = {
+  role: 'proposal' | 'before' | 'candidate' | 'diff' | 'mutation_response' | 'reconciled_admin';
+  relativePath: string;
+  mediaType: string;
+  sha256: string;
+  bytes: number;
+};
+
+export type StoredProposal = {
+  id: string;
+  productGid: string;
+  kind: ProposalKind;
+  parentProposalId: string | null;
+  status: ProposalStatus;
+  verificationStatus: ProposalVerificationStatus;
+  sourceEvidenceRunId: string;
+  verificationEvidenceRunId: string | null;
+  currentScore: number | null;
+  predictedScore: number | null;
+  verifiedScore: number | null;
+  changedFields: string[];
+  warningCodes: string[];
+  createdAt: string;
+  approvedAt: string | null;
+  completedAt: string | null;
+  proposalArtifactSha256: string;
 };
 
 type Migration = string | ((database: DatabaseSync) => void);
@@ -443,6 +484,76 @@ const migrations: Migration[] = [
     DROP TABLE evidence_artifacts;
     ALTER TABLE evidence_sources_v2 RENAME TO evidence_sources;
     ALTER TABLE evidence_artifacts_v2 RENAME TO evidence_artifacts;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS proposals (
+      id TEXT PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('improvement', 'revert')),
+      parent_proposal_id TEXT REFERENCES proposals(id) ON DELETE RESTRICT,
+      source_evidence_run_id TEXT NOT NULL REFERENCES evidence_runs(id) ON DELETE RESTRICT,
+      verification_evidence_run_id TEXT REFERENCES evidence_runs(id) ON DELETE SET NULL,
+      base_fingerprint TEXT NOT NULL,
+      candidate_fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN (
+        'ready', 'rejected', 'approved', 'applying', 'stale',
+        'not_applied', 'ambiguous', 'applied'
+      )),
+      verification_status TEXT NOT NULL CHECK (verification_status IN (
+        'not_started', 'pending', 'verified', 'failed', 'inconclusive', 'drifted'
+      )),
+      current_readiness_json TEXT NOT NULL,
+      predicted_readiness_json TEXT NOT NULL,
+      validation_codes_json TEXT NOT NULL,
+      warning_codes_json TEXT NOT NULL,
+      rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+      created_at TEXT NOT NULL,
+      approved_at TEXT,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_fields (
+      proposal_id TEXT NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+      field TEXT NOT NULL CHECK (field IN ('title', 'descriptionHtml', 'seo.title', 'seo.description')),
+      before_hash TEXT NOT NULL,
+      after_hash TEXT NOT NULL,
+      rule_codes_json TEXT NOT NULL,
+      provenance_json TEXT NOT NULL,
+      PRIMARY KEY (proposal_id, field)
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_events (
+      id TEXT PRIMARY KEY,
+      proposal_id TEXT NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_write_attempts (
+      id TEXT PRIMARY KEY,
+      proposal_id TEXT NOT NULL UNIQUE REFERENCES proposals(id) ON DELETE CASCADE,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      outcome TEXT CHECK (outcome IS NULL OR outcome IN ('candidate', 'base', 'ambiguous', 'unreadable')),
+      error_codes_json TEXT NOT NULL DEFAULT '[]'
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_artifacts (
+      proposal_id TEXT NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN (
+        'proposal', 'before', 'candidate', 'diff', 'mutation_response', 'reconciled_admin'
+      )),
+      relative_path TEXT NOT NULL,
+      media_type TEXT NOT NULL CHECK (media_type = 'application/json'),
+      sha256 TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      PRIMARY KEY (proposal_id, relative_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS proposals_product_created ON proposals(product_id, created_at);
+    CREATE INDEX IF NOT EXISTS proposals_status ON proposals(status, verification_status);
+    CREATE INDEX IF NOT EXISTS proposal_events_proposal_created ON proposal_events(proposal_id, created_at);
   `,
 ];
 
@@ -961,6 +1072,289 @@ export class CatalogRepository {
       tests: count(this.database.prepare('SELECT COUNT(*) AS count FROM regression_tests')),
       testRuns: count(this.database.prepare('SELECT COUNT(*) AS count FROM test_runs')),
     };
+  }
+
+  latestProposalEvidence(shop: string, productGid: string): LatestProposalEvidence | null {
+    this.validateProductGid(productGid);
+    const row = this.database.prepare(`
+      SELECT evidence_runs.id, evidence_runs.completed_at, evidence_artifacts.sha256,
+        readiness_scores.total, readiness_scores.known_points, readiness_scores.known_max
+      FROM evidence_runs
+      JOIN products ON products.id = evidence_runs.product_id
+      JOIN shops ON shops.id = products.shop_id
+      JOIN readiness_scores ON readiness_scores.evidence_run_id = evidence_runs.id
+      JOIN evidence_artifacts ON evidence_artifacts.run_id = evidence_runs.id
+        AND evidence_artifacts.source = 'admin' AND evidence_artifacts.relative_path = 'admin.json'
+      WHERE shops.domain = ? AND products.shopify_gid = ?
+        AND EXISTS (
+          SELECT 1 FROM evidence_sources
+          WHERE evidence_sources.run_id = evidence_runs.id AND evidence_sources.source = 'browser'
+        )
+      ORDER BY evidence_runs.completed_at DESC, evidence_runs.id DESC
+      LIMIT 1
+    `).get(shop, productGid) as {
+      id: string; completed_at: string; sha256: string;
+      total: number | null; known_points: number; known_max: number;
+    } | undefined;
+    if (!row) return null;
+    const componentRows = this.database.prepare(`
+      SELECT component, weight, outcome, points, reason_codes_json, evidence_refs_json
+      FROM readiness_components WHERE evidence_run_id = ? ORDER BY rowid
+    `).all(row.id) as Array<{
+      component: ReadinessScore['components'][number]['id'];
+      weight: ReadinessScore['components'][number]['weight'];
+      outcome: ReadinessScore['components'][number]['outcome'];
+      points: number | null; reason_codes_json: string; evidence_refs_json: string;
+    }>;
+    const readiness = readinessScoreSchema.parse({
+      schemaVersion: 1,
+      total: row.total,
+      knownPoints: row.known_points,
+      knownMax: row.known_max,
+      components: componentRows.map(component => ({
+        id: component.component,
+        weight: component.weight,
+        outcome: component.outcome,
+        points: component.points,
+        reasonCodes: JSON.parse(component.reason_codes_json) as unknown,
+        evidenceRefs: JSON.parse(component.evidence_refs_json) as unknown,
+      })),
+      limitation: 'Diagnostic inventory-search readiness; not an SEO ranking claim.',
+    });
+    return { evidenceRunId: row.id, completedAt: row.completed_at, adminArtifactSha256: row.sha256, readiness };
+  }
+
+  recordProposal(shop: string, proposal: ProposalArtifact, artifacts: ProposalArtifactIndex[]): void {
+    this.transaction(() => {
+      const product = this.database.prepare(`
+        SELECT products.id AS product_id FROM products
+        JOIN shops ON shops.id = products.shop_id
+        WHERE shops.domain = ? AND products.shopify_gid = ?
+      `).get(shop, proposal.productId) as { product_id: number } | undefined;
+      if (!product) throw new Error('Cannot save a proposal for an unknown product.');
+      const run = this.database.prepare('SELECT id FROM evidence_runs WHERE id = ? AND product_id = ?')
+        .get(proposal.sourceEvidenceRunId, product.product_id);
+      if (!run) throw new Error('Cannot save a proposal without its source evidence.');
+      const candidateFingerprint = createHash('sha256').update(JSON.stringify(proposal.candidate), 'utf8').digest('hex');
+      this.database.prepare(`
+        INSERT INTO proposals (
+          id, product_id, kind, parent_proposal_id, source_evidence_run_id,
+          base_fingerprint, candidate_fingerprint, status, verification_status,
+          current_readiness_json, predicted_readiness_json, validation_codes_json,
+          warning_codes_json, rule_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 'not_started', ?, ?, ?, ?, 1, ?)
+      `).run(
+        proposal.id, product.product_id, proposal.kind, proposal.parentProposalId,
+        proposal.sourceEvidenceRunId, proposal.base.fingerprint, candidateFingerprint,
+        JSON.stringify(proposal.currentReadiness), JSON.stringify(proposal.predictedReadiness),
+        JSON.stringify(proposal.validation.reasonCodes), JSON.stringify(proposal.validation.warningCodes),
+        proposal.createdAt,
+      );
+      const fieldStatement = this.database.prepare(`
+        INSERT INTO proposal_fields (
+          proposal_id, field, before_hash, after_hash, rule_codes_json, provenance_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const change of proposal.changes) fieldStatement.run(
+        proposal.id, change.field, change.beforeHash, change.afterHash,
+        JSON.stringify(change.ruleCodes), JSON.stringify(change.provenance),
+      );
+      this.insertProposalArtifacts(proposal.id, artifacts);
+      this.insertProposalEvent(proposal.id, 'created', proposal.createdAt, {
+        kind: proposal.kind, changedFields: proposal.changes.map(change => change.field),
+      });
+      this.insertProposalEvent(proposal.id, 'validated', proposal.createdAt, {
+        warnings: proposal.validation.warningCodes,
+      });
+    });
+  }
+
+  addProposalArtifacts(proposalId: string, artifacts: ProposalArtifactIndex[]): void {
+    this.transaction(() => this.insertProposalArtifacts(proposalId, artifacts));
+  }
+
+  getProposal(proposalId: string): StoredProposal {
+    const row = this.database.prepare(`
+      SELECT proposals.*, products.shopify_gid,
+        (SELECT sha256 FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT total FROM readiness_scores
+          WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
+      FROM proposals JOIN products ON products.id = proposals.product_id
+      WHERE proposals.id = ?
+    `).get(proposalId) as Record<string, unknown> | undefined;
+    if (!row) throw new Error('Proposal does not exist.');
+    const fields = this.database.prepare(`
+      SELECT field FROM proposal_fields WHERE proposal_id = ? ORDER BY field
+    `).all(proposalId) as Array<{ field: string }>;
+    return this.storedProposal(row, fields.map(value => value.field));
+  }
+
+  listProposals(shop?: string): StoredProposal[] {
+    const rows = this.database.prepare(`
+      SELECT proposals.*, products.shopify_gid,
+        (SELECT sha256 FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT total FROM readiness_scores
+          WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
+      FROM proposals JOIN products ON products.id = proposals.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE (? IS NULL OR shops.domain = ?)
+      ORDER BY proposals.created_at DESC, proposals.id DESC
+    `).all(shop ?? null, shop ?? null) as Array<Record<string, unknown>>;
+    return rows.map(row => {
+      const fields = this.database.prepare('SELECT field FROM proposal_fields WHERE proposal_id = ? ORDER BY field')
+        .all(row.id as string) as Array<{ field: string }>;
+      return this.storedProposal(row, fields.map(value => value.field));
+    });
+  }
+
+  rejectProposal(proposalId: string, at: string): void {
+    this.transitionProposal(proposalId, ['ready'], 'rejected', at, 'rejected', {});
+  }
+
+  markProposalStale(proposalId: string, at: string, changedFields: string[], updatedAtChanged = false): void {
+    this.transitionProposal(proposalId, ['ready'], 'stale', at, 'stale_detected', { changedFields, updatedAtChanged });
+  }
+
+  approveProposal(proposalId: string, at: string): void {
+    this.transitionProposal(proposalId, ['ready'], 'approved', at, 'approved', {});
+    this.database.prepare('UPDATE proposals SET approved_at = ? WHERE id = ?').run(at, proposalId);
+  }
+
+  beginProposalWrite(proposalId: string, attemptId: string, at: string): void {
+    this.transaction(() => {
+      const changed = this.database.prepare(`UPDATE proposals SET status = 'applying' WHERE id = ? AND status = 'approved'`)
+        .run(proposalId);
+      if (Number(changed.changes) !== 1) throw new Error('Proposal is not approved for writing.');
+      this.database.prepare(`INSERT INTO proposal_write_attempts (id, proposal_id, started_at) VALUES (?, ?, ?)`)
+        .run(attemptId, proposalId, at);
+      this.insertProposalEvent(proposalId, 'mutation_started', at, { attemptId });
+    });
+  }
+
+  reconcileProposalWrite(
+    proposalId: string,
+    attemptId: string,
+    outcome: 'candidate' | 'base' | 'ambiguous' | 'unreadable',
+    at: string,
+    errorCodes: string[],
+  ): void {
+    const status: ProposalStatus = outcome === 'candidate' ? 'applied' : outcome === 'base' ? 'not_applied' : 'ambiguous';
+    this.transaction(() => {
+      const attempt = this.database.prepare(`
+        UPDATE proposal_write_attempts SET completed_at = ?, outcome = ?, error_codes_json = ?
+        WHERE id = ? AND proposal_id = ?
+      `).run(at, outcome, JSON.stringify(errorCodes), attemptId, proposalId);
+      if (Number(attempt.changes) !== 1) throw new Error('Proposal write attempt cannot be reconciled.');
+      const changed = this.database.prepare(`
+        UPDATE proposals SET status = ?, verification_status = ?, completed_at = ?
+        WHERE id = ? AND status IN ('applying', 'ambiguous')
+      `).run(status, outcome === 'candidate' ? 'pending' : 'not_started', at, proposalId);
+      if (Number(changed.changes) !== 1) throw new Error('Proposal write state cannot be reconciled.');
+      this.insertProposalEvent(proposalId, 'mutation_reconciled', at, { outcome, errorCodes });
+    });
+  }
+
+  proposalWriteAttempt(proposalId: string): { id: string; outcome: string | null } | null {
+    const row = this.database.prepare(`
+      SELECT id, outcome FROM proposal_write_attempts WHERE proposal_id = ?
+    `).get(proposalId) as { id: string; outcome: string | null } | undefined;
+    return row ?? null;
+  }
+
+  setProposalVerification(
+    proposalId: string,
+    status: ProposalVerificationStatus,
+    evidenceRunId: string | null,
+    at: string,
+  ): void {
+    this.transaction(() => {
+      const changed = this.database.prepare(`
+        UPDATE proposals SET verification_status = ?, verification_evidence_run_id = ?, completed_at = ?
+        WHERE id = ? AND status = 'applied'
+      `).run(status, evidenceRunId, at, proposalId);
+      if (Number(changed.changes) !== 1) throw new Error('Only an applied proposal can be verified.');
+      this.insertProposalEvent(proposalId, 'verification_completed', at, { status, evidenceRunId });
+    });
+  }
+
+  recoverInterruptedProposals(at: string): number {
+    return this.transaction(() => {
+      const approved = this.database.prepare(`
+        SELECT id FROM proposals WHERE status = 'approved'
+      `).all() as Array<{ id: string }>;
+      for (const row of approved) {
+        this.database.prepare(`UPDATE proposals SET status = 'ready', approved_at = NULL WHERE id = ?`).run(row.id);
+        this.insertProposalEvent(row.id, 'approval_expired_after_restart', at, {});
+      }
+      const applying = this.database.prepare(`
+        SELECT id FROM proposals WHERE status = 'applying'
+      `).all() as Array<{ id: string }>;
+      for (const row of applying) {
+        this.database.prepare(`UPDATE proposals SET status = 'ambiguous', completed_at = ? WHERE id = ?`).run(at, row.id);
+        this.insertProposalEvent(row.id, 'interrupted_write_requires_reconciliation', at, {});
+      }
+      return approved.length + applying.length;
+    });
+  }
+
+  private storedProposal(row: Record<string, unknown>, fields: string[]): StoredProposal {
+    const current = readinessScoreSchema.parse(JSON.parse(String(row.current_readiness_json)));
+    const predicted = readinessScoreSchema.parse(JSON.parse(String(row.predicted_readiness_json)));
+    return {
+      id: String(row.id),
+      productGid: String(row.shopify_gid),
+      kind: row.kind as ProposalKind,
+      parentProposalId: row.parent_proposal_id === null ? null : String(row.parent_proposal_id),
+      status: row.status as ProposalStatus,
+      verificationStatus: row.verification_status as ProposalVerificationStatus,
+      sourceEvidenceRunId: String(row.source_evidence_run_id),
+      verificationEvidenceRunId: row.verification_evidence_run_id === null ? null : String(row.verification_evidence_run_id),
+      currentScore: current.total,
+      predictedScore: predicted.total,
+      verifiedScore: row.verified_score === null || row.verified_score === undefined ? null : Number(row.verified_score),
+      changedFields: fields,
+      warningCodes: JSON.parse(String(row.warning_codes_json)) as string[],
+      createdAt: String(row.created_at),
+      approvedAt: row.approved_at === null ? null : String(row.approved_at),
+      completedAt: row.completed_at === null ? null : String(row.completed_at),
+      proposalArtifactSha256: String(row.proposal_sha256),
+    };
+  }
+
+  private transitionProposal(
+    proposalId: string,
+    expected: ProposalStatus[],
+    next: ProposalStatus,
+    at: string,
+    event: string,
+    details: Record<string, unknown>,
+  ): void {
+    this.transaction(() => {
+      const placeholders = expected.map(() => '?').join(', ');
+      const changed = this.database.prepare(`UPDATE proposals SET status = ?, completed_at = ? WHERE id = ? AND status IN (${placeholders})`)
+        .run(next, ['ready', 'approved', 'applying'].includes(next) ? null : at, proposalId, ...expected);
+      if (Number(changed.changes) !== 1) throw new Error('Proposal is not in a valid state for this action.');
+      this.insertProposalEvent(proposalId, event, at, details);
+    });
+  }
+
+  private insertProposalArtifacts(proposalId: string, artifacts: ProposalArtifactIndex[]): void {
+    const statement = this.database.prepare(`
+      INSERT INTO proposal_artifacts (proposal_id, role, relative_path, media_type, sha256, bytes)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const artifact of artifacts) statement.run(
+      proposalId, artifact.role, artifact.relativePath, artifact.mediaType, artifact.sha256, artifact.bytes,
+    );
+  }
+
+  private insertProposalEvent(proposalId: string, event: string, at: string, details: Record<string, unknown>): void {
+    this.database.prepare(`
+      INSERT INTO proposal_events (id, proposal_id, event_type, details_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(randomUUID(), proposalId, event, JSON.stringify(details), at);
   }
 
   private monitoringSummaryByShopId(shopId: number): MonitoringSummary {

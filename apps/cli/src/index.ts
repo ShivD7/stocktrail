@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { emitKeypressEvents } from 'node:readline';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { dataDirectory, initialize, readConfig } from '../../../packages/agent/src/config.js';
 import { scanDemo } from '../../../packages/agent/src/demo.js';
@@ -15,6 +16,17 @@ import { scanEvidenceBundle } from '../../../packages/agent/src/combined-scan.js
 import { formatEvidenceBundle } from './bundle-output.js';
 import { runBrowserRegressionTests, runStoredRegressionTests } from '../../../packages/test-runner/src/index.js';
 import { formatStoredTestRun } from './test-output.js';
+import {
+  applyProposal,
+  createRevert,
+  improveProduct,
+  listProposals,
+  proposalDetails,
+  reconcileProposalStatus,
+  proposalStatus,
+  rejectProposal,
+} from '../../../packages/agent/src/proposals.js';
+import { formatProposalList, formatProposalPreview, formatProposalStatus } from './proposal-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -38,6 +50,12 @@ Usage: stocktrail <command> [options]
   monitor candidates                    List active local product GIDs without catalog content
   monitor add --product-id <gid>        Monitor an imported product (maximum 10)
   monitor remove --product-id <gid>     Stop monitoring an imported product
+  improve --product-id <gid>            Create a deterministic proposal from Phase 3 evidence
+  proposal list                         List local proposal metadata
+  proposal status <proposal-id>         Show local proposal status; add --reconcile for a read-only refresh
+  proposal reject <proposal-id>         Reject a ready proposal without a Shopify call
+  apply <proposal-id>                   Review, explicitly approve, and apply one proposal
+  revert <applied-proposal-id>          Create an independently reviewed revert proposal
 
   --help, -h                            Show help
   --version, -v                         Show version
@@ -95,13 +113,15 @@ async function main() {
       shop: { type: 'string' }, demo: { type: 'boolean' }, admin: { type: 'boolean' }, ajax: { type: 'boolean' },
       preview: { type: 'boolean' }, limit: { type: 'string' },
       browser: { type: 'boolean' }, 'cart-add': { type: 'boolean' },
+      approve: { type: 'string' }, 'acknowledge-revert-risk': { type: 'boolean' },
+      reconcile: { type: 'boolean' },
       'product-id': { type: 'string' },
     },
   });
   if (values.help) { console.log(help); return; }
   if (values.version) { console.log('0.0.0'); return; }
   const [command, ...extra] = positionals;
-  if (extra.length && command !== 'monitor') throw new Error('Unexpected arguments. Use --help for usage.');
+  if (extra.length && !['monitor', 'proposal', 'apply', 'revert'].includes(command ?? '')) throw new Error('Unexpected arguments. Use --help for usage.');
   if (values.shop !== undefined && command !== 'init') throw new Error('--shop is only supported with init.');
   if (values.demo !== undefined && command !== 'scan') throw new Error('--demo is only supported with scan.');
   if (values.admin !== undefined && command !== 'scan') throw new Error('--admin is only supported with scan.');
@@ -115,9 +135,14 @@ async function main() {
   if (values['cart-add'] && !values.browser) throw new Error('--cart-add requires --browser.');
   if (values.preview !== undefined && command !== 'import') throw new Error('--preview is only supported with import.');
   if (values.limit !== undefined && command !== 'import') throw new Error('--limit is only supported with import.');
-  if (values['product-id'] !== undefined && command !== 'monitor' && command !== 'scan') {
-    throw new Error('--product-id is only supported with monitor or scan.');
+  if (values['product-id'] !== undefined && command !== 'monitor' && command !== 'scan' && command !== 'improve') {
+    throw new Error('--product-id is only supported with monitor, scan, or improve.');
   }
+  if (values.approve !== undefined && command !== 'apply') throw new Error('--approve is only supported with apply.');
+  if (values['acknowledge-revert-risk'] !== undefined && command !== 'apply') {
+    throw new Error('--acknowledge-revert-risk is only supported with apply.');
+  }
+  if (values.reconcile !== undefined && command !== 'proposal') throw new Error('--reconcile is only supported with proposal status.');
   const directory = dataDirectory();
   switch (command) {
     case undefined: console.log(help); return;
@@ -263,6 +288,79 @@ async function main() {
       if (summary.activeMonitoredProductCount !== summary.monitoredProductCount) {
         console.log(`Active monitored products: ${summary.activeMonitoredProductCount}.`);
       }
+      return;
+    }
+    case 'improve': {
+      if (!values['product-id']) throw new Error('--product-id is required with improve.');
+      const result = await improveProduct(directory, values['product-id']);
+      if (result.proposal) {
+        for (const line of formatProposalPreview(result.proposal)) console.log(line);
+        console.log(`Review again and apply with: stocktrail apply ${result.proposal.id}`);
+      } else {
+        console.log('No safe deterministic proposal was created. Guidance only; Shopify was not changed.');
+        if (result.guidanceCodes.length) console.log(`Guidance codes: ${result.guidanceCodes.join(', ')}.`);
+        process.exitCode = 3;
+      }
+      return;
+    }
+    case 'proposal': {
+      const [action, proposalId] = extra;
+      if (action === 'list' && proposalId === undefined) {
+        if (values.reconcile) throw new Error('--reconcile is only supported with proposal status.');
+        for (const line of formatProposalList(await listProposals(directory))) console.log(line);
+        return;
+      }
+      if (action === 'status' && proposalId && extra.length === 2) {
+        const value = values.reconcile
+          ? await reconcileProposalStatus(directory, proposalId)
+          : await proposalStatus(directory, proposalId);
+        for (const line of formatProposalStatus(value)) console.log(line);
+        return;
+      }
+      if (action === 'reject' && proposalId && extra.length === 2) {
+        if (values.reconcile) throw new Error('--reconcile is only supported with proposal status.');
+        await rejectProposal(directory, proposalId);
+        console.log(`Rejected proposal ${proposalId}. Shopify was not contacted.`);
+        return;
+      }
+      throw new Error('Use proposal list, proposal status <proposal-id>, or proposal reject <proposal-id>.');
+    }
+    case 'apply': {
+      const [proposalId] = extra;
+      if (!proposalId || extra.length !== 1) throw new Error('Use apply <proposal-id>.');
+      if (values.approve !== undefined && values.approve !== proposalId) {
+        throw new Error('--approve must exactly equal the full proposal ID.');
+      }
+      const details = await proposalDetails(directory, proposalId);
+      for (const line of formatProposalPreview(details.proposal)) console.log(line);
+      const action = details.proposal.kind === 'revert' ? 'REVERT' : 'APPLY';
+      let approval: string;
+      if (values.approve !== undefined) {
+        approval = `${action} ${proposalId}`;
+      } else {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          throw new Error(`Noninteractive apply requires --approve ${proposalId}.`);
+        }
+        const readline = createInterface({ input: process.stdin, output: process.stdout });
+        try { approval = await readline.question(`Type ${action} ${proposalId} to continue: `); }
+        finally { readline.close(); }
+      }
+      const result = await applyProposal(
+        directory, proposalId, approval, values['acknowledge-revert-risk'] === true,
+      );
+      console.log(`Apply result: ${result.status}; verification: ${result.verification}.`);
+      if (result.status === 'stale' || result.status === 'ambiguous') process.exitCode = 4;
+      else if (result.verification === 'inconclusive' || result.verification === 'failed' || result.verification === 'drifted') process.exitCode = 3;
+      else if (result.diagnosticOutcome === 'fail') process.exitCode = 2;
+      else if (result.status === 'not_applied') process.exitCode = 1;
+      return;
+    }
+    case 'revert': {
+      const [proposalId] = extra;
+      if (!proposalId || extra.length !== 1) throw new Error('Use revert <applied-proposal-id>.');
+      const proposal = await createRevert(directory, proposalId);
+      for (const line of formatProposalPreview(proposal)) console.log(line);
+      console.log(`Review again and apply with: stocktrail apply ${proposal.id}`);
       return;
     }
     default: throw new Error(`Unknown command: ${command}. Use --help for usage.`);

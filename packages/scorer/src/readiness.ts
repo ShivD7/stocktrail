@@ -110,7 +110,7 @@ function structuredDataQuality(data: StructuredDataEvidence): ReadinessComponent
   return component('structured_data_quality', 20, 'ready', ['variant_offers_complete'], refs);
 }
 
-function promiseClarity(content: AdminContentEvidence | null): ReadinessComponent {
+export function scoreInventoryPromiseClarity(content: AdminContentEvidence | null): ReadinessComponent {
   const refs = [{ source: 'admin' as const, field: 'product_content' }];
   if (content === null) {
     return component('inventory_promise_clarity', 15, 'inconclusive', ['admin_content_unavailable'], refs);
@@ -122,7 +122,7 @@ function promiseClarity(content: AdminContentEvidence | null): ReadinessComponen
   return component('inventory_promise_clarity', 15, 'ready', ['no_transient_inventory_promises'], refs);
 }
 
-function staleClaimSafety(content: AdminContentEvidence | null): ReadinessComponent {
+export function scoreStaleClaimSafety(content: AdminContentEvidence | null): ReadinessComponent {
   const refs = [
     { source: 'admin' as const, field: 'product.updatedAt' },
     { source: 'admin' as const, field: 'inventoryItem.updatedAt' },
@@ -149,8 +149,8 @@ export function scoreInventorySearchReadiness(input: ReadinessInput): ReadinessS
     availabilityAgreement(input.evaluations),
     variantIdentity(input.matches),
     structuredDataQuality(input.structuredData),
-    promiseClarity(input.adminContent),
-    staleClaimSafety(input.adminContent),
+    scoreInventoryPromiseClarity(input.adminContent),
+    scoreStaleClaimSafety(input.adminContent),
   ];
   const conclusive = components.filter(value => value.points !== null);
   const knownPoints = conclusive.reduce((total, value) => total + value.points!, 0);

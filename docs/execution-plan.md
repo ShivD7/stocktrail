@@ -358,6 +358,8 @@ Current implementation note: the combined `scan --product-id <gid>` command now 
 
 Current implementation note: the Phase 3 core and approved Playwright integration are implemented. `scan --browser --product-id <gid>` adds isolated Dawn evidence, evaluates ST-001 through ST-003, calculates the full 30/25/20/15/10 readiness score from fresh normalized Admin content and timestamps, and persists incidents and regression assertions. Missing or invalid Admin content makes only the dependent components inconclusive and is never printed. `--cart-add` is the explicit mutation opt-in; checkout remains blocked. `test --browser` reruns stored assertions from fresh evidence, while plain `test` retains its safe inconclusive behavior for browser-dependent assertions.
 
+Phase 4 implementation note: deterministic product-content proposals are implemented for `title`, `descriptionHtml`, `seo.title`, and `seo.description` only. Generation is local and extractive, unsafe edits remain guidance-only, and every write requires a fresh stale check plus explicit per-proposal approval. The write path requires `write_products`, makes one `productUpdate` attempt, reconciles uncertain outcomes without retrying, and runs the Phase 3 browser scan afterward with cart submission disabled. Reverts are separate proposals with separate approval. The local React dashboard remains Phase 5 work and is intentionally not part of this phase.
+
 - Implement strict variant matching.
 - Implement ST-001, ST-002, and ST-003.
 - Create fixtures for matching, contradictory, and inconclusive evidence.

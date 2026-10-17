@@ -54,7 +54,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
     assert.match(
       run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
-      /only supported with monitor or scan/,
+      /only supported with monitor, scan, or improve/,
     );
     assert.equal(run('init', '--shop', 'https://bad.example').status, 1);
     assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);

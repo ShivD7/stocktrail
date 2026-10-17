@@ -24,6 +24,11 @@ npm run dev -- scan --ajax --product-id gid://shopify/Product/123
 npm run dev -- scan --demo
 npm run dev -- test
 npm run dev -- test --browser
+npm run dev -- improve --product-id gid://shopify/Product/123
+npm run dev -- proposal list
+npm run dev -- proposal status <proposal-id>
+npm run dev -- apply <proposal-id>
+npm run dev -- revert <applied-proposal-id>
 ```
 
 The demo uses two synthetic products, prints one FAIL and one PASS, and saves a JSON evidence report under `.stocktrail/reports`. It makes no network requests. A diagnostic contradiction exits with code **2**; command/configuration errors exit with **1**; success exits with **0**.
@@ -47,6 +52,12 @@ After an import, use `monitor candidates` to show active local Shopify product G
 Add `--browser` to a combined scan to collect rendered Dawn storefront evidence in Playwright and run ST-001 through ST-003. Each variant uses a fresh, nonpersistent Chromium context. StockTrail verifies the exact product, variant, single visible product form, and single visible add control; ambiguous or unsupported pages are inconclusive. DNS is checked against private and reserved networks, navigation is pinned to a validated public address, third-party requests and WebSockets are blocked, and checkout/account/payment routes are always blocked. The normal browser scan observes control state only. `--cart-add` is the explicit authorization for an isolated add-to-cart probe; it requires an initially empty cart and always attempts verified cleanup. Checkout is never attempted.
 
 Browser scans save a version 2 evidence bundle, deterministic rule evaluations, incident lifecycle updates, regression assertions, and the weighted Inventory Search Readiness diagnostic. The 30/25/20/15/10 score uses fresh normalized Admin title, description, SEO, product-update, and latest inventory-update evidence for inventory-promise clarity and stale-claim safety; missing or invalid content makes those components explicitly inconclusive. Product content is never printed—the terminal remains aggregate-only. `stocktrail test --browser` reruns stored assertions with fresh evidence; add `--cart-add` only when that mutation is intended. Plain `stocktrail test` preserves the safe non-browser behavior and reports browser-dependent assertions as inconclusive. A contradiction exits with **2**, an inconclusive browser run with **3**, an operational error with **1**, and an all-pass or empty run with **0**. Scope remains Dawn-compatible product forms, one locale/market, and ordinary physical variants.
+
+`improve --product-id <gid>` uses the latest integrity-checked Phase 3 browser diagnostic to create one deterministic local proposal. It can only remove complete standalone transient inventory claims or copy existing content exactly into an empty SEO field. Mixed claims, unsupported HTML, missing provenance, information loss, length violations, or score regressions remain guidance-only. It makes no Shopify request. Proposal content is stored in private integrity-indexed artifacts; SQLite stores lifecycle and audit metadata only.
+
+Review proposals with `proposal list` and `proposal status <id>`. Reject one locally with `proposal reject <id>`. `apply <id>` prints the field-level diff and requires typing `APPLY <full-id>`; a noninteractive run requires `--approve <same-full-id>`. The apply path requires the exact `write_products` scope, performs a fresh byte-for-byte stale check, makes at most one `productUpdate` attempt, reconciles uncertain responses with a fresh read, and never blindly retries. A confirmed update triggers the normal Phase 3 browser scan with cart submission disabled. Stale or ambiguous outcomes exit with **4**. Use `proposal status <id> --reconcile` for a read-only refresh of an ambiguous or unverified outcome.
+
+`revert <applied-id>` creates a new proposal from the original private before snapshot; it never writes automatically. Applying that proposal requires typing `REVERT <full-id>`. If restoring the prior content would reintroduce a transient claim or lower readiness, `--acknowledge-revert-risk` is also required. Phase 4 does not edit themes, inventory, variants, prices, handles, status, publications, tags, metafields, or checkout behavior, and it does not use a language model.
 
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Read-only Admin import and evidence commands retrieve this credential through the Shopify adapter; it is never sent to the public Ajax endpoint.
 

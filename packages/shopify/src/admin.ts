@@ -24,6 +24,12 @@ export type ShopifyConnection = {
   grantedScopes: string[];
 };
 
+export function requireProductWriteScope(connection: ShopifyConnection): void {
+  if (!connection.grantedScopes.includes('write_products')) {
+    throw new Error('The stored token is missing the required write_products scope. No Shopify write was attempted.');
+  }
+}
+
 type VerificationPayload = {
   shop?: { name?: unknown; myshopifyDomain?: unknown };
   currentAppInstallation?: { accessScopes?: Array<{ handle?: unknown }> };
