@@ -16,6 +16,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
   try {
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);
+    assert.match(run('--help').stdout, /dashboard/);
     assert.equal(run('doctor').status, 1);
     assert.match(run('scan').stderr, /--product-id is required for a combined scan/);
     assert.match(run('scan', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);

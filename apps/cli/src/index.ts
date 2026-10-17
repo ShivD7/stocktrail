@@ -27,6 +27,7 @@ import {
   rejectProposal,
 } from '../../../packages/agent/src/proposals.js';
 import { formatProposalList, formatProposalPreview, formatProposalStatus } from './proposal-output.js';
+import { launchDashboard, waitForDashboardShutdown } from '../../dashboard/launch.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -56,6 +57,7 @@ Usage: stocktrail <command> [options]
   proposal reject <proposal-id>         Reject a ready proposal without a Shopify call
   apply <proposal-id>                   Review, explicitly approve, and apply one proposal
   revert <applied-proposal-id>          Create an independently reviewed revert proposal
+  dashboard [--port 4173] [--no-open]   Start the local dashboard on loopback
 
   --help, -h                            Show help
   --version, -v                         Show version
@@ -115,6 +117,7 @@ async function main() {
       browser: { type: 'boolean' }, 'cart-add': { type: 'boolean' },
       approve: { type: 'string' }, 'acknowledge-revert-risk': { type: 'boolean' },
       reconcile: { type: 'boolean' },
+      port: { type: 'string' }, 'no-open': { type: 'boolean' },
       'product-id': { type: 'string' },
     },
   });
@@ -143,6 +146,8 @@ async function main() {
     throw new Error('--acknowledge-revert-risk is only supported with apply.');
   }
   if (values.reconcile !== undefined && command !== 'proposal') throw new Error('--reconcile is only supported with proposal status.');
+  if (values.port !== undefined && command !== 'dashboard') throw new Error('--port is only supported with dashboard.');
+  if (values['no-open'] !== undefined && command !== 'dashboard') throw new Error('--no-open is only supported with dashboard.');
   const directory = dataDirectory();
   switch (command) {
     case undefined: console.log(help); return;
@@ -179,6 +184,16 @@ async function main() {
       console.log(`OK Configuration: ${directory}`);
       console.log(config.shop ? `OK Shop: ${config.shop}` : 'INFO Shop is not configured; demo mode is available.');
       console.log('INFO Offline setup check only. Use stocktrail connect to verify and store a Shopify token.');
+      return;
+    }
+    case 'dashboard': {
+      const server = await launchDashboard(directory, {
+        port: values.port,
+        open: values['no-open'] !== true,
+      });
+      console.log(`StockTrail dashboard: ${server.url}`);
+      console.log('Press Ctrl+C to stop.');
+      await waitForDashboardShutdown(server);
       return;
     }
     case 'scan': {
