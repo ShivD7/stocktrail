@@ -1245,6 +1245,30 @@ export class CatalogRepository {
     });
   }
 
+  dashboardEvidenceArtifact(
+    shop: string,
+    runId: string,
+    relativePath: 'admin.json' | 'ajax.json' | 'html.html' | 'jsonld.json' | 'browser.json',
+  ): { relativePath: string; mediaType: string; sha256: string; bytes: number } | null {
+    const row = this.database.prepare(`
+      SELECT evidence_artifacts.relative_path, evidence_artifacts.media_type,
+        evidence_artifacts.sha256, evidence_artifacts.bytes
+      FROM evidence_artifacts
+      JOIN evidence_runs ON evidence_runs.id = evidence_artifacts.run_id
+      JOIN products ON products.id = evidence_runs.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ? AND evidence_runs.id = ? AND evidence_artifacts.relative_path = ?
+    `).get(shop, runId, relativePath) as {
+      relative_path: string; media_type: string; sha256: string; bytes: number;
+    } | undefined;
+    return row ? {
+      relativePath: row.relative_path,
+      mediaType: row.media_type,
+      sha256: row.sha256,
+      bytes: Number(row.bytes),
+    } : null;
+  }
+
   latestProposalEvidence(shop: string, productGid: string): LatestProposalEvidence | null {
     this.validateProductGid(productGid);
     const row = this.database.prepare(`

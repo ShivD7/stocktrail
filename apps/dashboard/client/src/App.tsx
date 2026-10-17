@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DashboardOverview } from '../../../../packages/shared/src/dashboard.js';
 import { Incidents } from './Incidents.js';
+import { IncidentDetailView } from './IncidentDetail.js';
 
 type Route = 'overview' | 'incidents' | 'connection';
 
@@ -110,6 +111,7 @@ function Placeholder({ route }: { route: Exclude<Route, 'overview'> }) {
 
 function AppShell({ data }: { data: DashboardOverview }) {
   const route = useRoute();
+  const detailMatch = /^#\/incidents\/([0-9a-f-]+)$/.exec(window.location.hash);
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to content</a>
@@ -129,7 +131,9 @@ function AppShell({ data }: { data: DashboardOverview }) {
         </div>
       </aside>
       <main id="main-content" tabIndex={-1}>
-        {route === 'overview' ? <Overview data={data} /> : route === 'incidents' ? <Incidents /> : <Placeholder route={route} />}
+        {route === 'overview' ? <Overview data={data} />
+          : route === 'incidents' && detailMatch?.[1] ? <IncidentDetailView incidentId={detailMatch[1]} />
+            : route === 'incidents' ? <Incidents /> : <Placeholder route={route} />}
       </main>
     </div>
   );

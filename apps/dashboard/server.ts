@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, readFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openCatalogRepository } from '../../packages/database/src/catalog-repository.js';
@@ -13,7 +14,11 @@ export type DashboardDataSource = {
   overview(): Promise<DashboardOverview>;
   incidents(status?: 'open' | 'resolved' | 'ignored'): Promise<DashboardIncidentSummary[]>;
   incident(id: string): Promise<DashboardIncidentDetail | null>;
+  evidence(runId: string, artifact: EvidenceArtifactName): Promise<DashboardEvidence | null>;
 };
+
+type EvidenceArtifactName = 'admin.json' | 'ajax.json' | 'html.html' | 'jsonld.json' | 'browser.json';
+type DashboardEvidence = { body: Buffer; mediaType: string; filename: EvidenceArtifactName };
 
 export type DashboardServer = {
   url: string;
@@ -37,6 +42,24 @@ export function createDashboardDataSource(directory: string, shop: string | null
       if (!shop) return null;
       const repository = await openCatalogRepository(directory);
       try { return repository.dashboardIncident(shop, id); } finally { repository.close(); }
+    },
+    async evidence(runId, artifact) {
+      if (!shop) return null;
+      const repository = await openCatalogRepository(directory);
+      let indexed;
+      try { indexed = repository.dashboardEvidenceArtifact(shop, runId, artifact); }
+      finally { repository.close(); }
+      if (!indexed) return null;
+      const path = join(directory, 'artifacts', 'scans', runId, indexed.relativePath);
+      const details = await lstat(path);
+      if (!details.isFile() || details.isSymbolicLink() || details.size !== indexed.bytes) {
+        throw new Error('Evidence artifact integrity check failed.');
+      }
+      const body = await readFile(path);
+      if (createHash('sha256').update(body).digest('hex') !== indexed.sha256) {
+        throw new Error('Evidence artifact integrity check failed.');
+      }
+      return { body, mediaType: indexed.mediaType, filename: artifact };
     },
   };
 }
@@ -84,6 +107,22 @@ async function sendStatic(response: ServerResponse, pathname: string): Promise<b
   return true;
 }
 
+function sendEvidence(response: ServerResponse, evidence: DashboardEvidence): void {
+  const contentType = evidence.mediaType === 'text/html'
+    ? 'text/plain; charset=utf-8'
+    : 'application/json; charset=utf-8';
+  response.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Length': evidence.body.byteLength,
+    'Content-Disposition': `inline; filename="${evidence.filename}"`,
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+  });
+  response.end(evidence.body);
+}
+
 function routeId(pathname: string): string | null {
   const match = /^\/api\/incidents\/([0-9a-f-]+)$/.exec(pathname);
   return match?.[1] ?? null;
@@ -105,6 +144,16 @@ async function routeRequest(
   }
   const url = new URL(request.url ?? '/', 'http://localhost');
   if (!url.pathname.startsWith('/api/') && await sendStatic(response, url.pathname)) return;
+  const evidenceMatch = /^\/api\/evidence\/([0-9a-f-]+)\/(admin\.json|ajax\.json|html\.html|jsonld\.json|browser\.json)$/.exec(url.pathname);
+  if (evidenceMatch) {
+    const runId = evidenceMatch[1];
+    const artifact = evidenceMatch[2] as EvidenceArtifactName;
+    if (!runId) { sendJson(response, 404, { error: 'evidence_not_found' }); return; }
+    const evidence = await data.evidence(runId, artifact);
+    if (!evidence) { sendJson(response, 404, { error: 'evidence_not_found' }); return; }
+    sendEvidence(response, evidence);
+    return;
+  }
   if (url.pathname === '/api/overview') {
     sendJson(response, 200, await data.overview());
     return;

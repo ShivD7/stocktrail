@@ -16,6 +16,11 @@ function source() {
     async overview() { return overview; },
     async incidents(status) { return status ? [{ status }] : []; },
     async incident(id) { return id === incidentId ? { id } : null; },
+    async evidence(runId, artifact) {
+      return runId === incidentId && artifact === 'jsonld.json'
+        ? { body: Buffer.from('{"synthetic":true}'), mediaType: 'application/json', filename: artifact }
+        : null;
+    },
   };
 }
 
@@ -46,6 +51,11 @@ test('dashboard server exposes loopback JSON routes with safe headers', async ()
     assert.equal((await fetch(`${server.url}/api/incidents?status=invalid`)).status, 400);
     assert.equal((await fetch(`${server.url}/api/incidents/${incidentId}`)).status, 200);
     assert.equal((await fetch(`${server.url}/api/incidents/22222222-2222-4222-8222-222222222222`)).status, 404);
+    const evidence = await fetch(`${server.url}/api/evidence/${incidentId}/jsonld.json`);
+    assert.equal(evidence.status, 200);
+    assert.equal(evidence.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await evidence.json(), { synthetic: true });
+    assert.equal((await fetch(`${server.url}/api/evidence/${incidentId}/secret.txt`)).status, 404);
     const page = await fetch(server.url);
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /default-src 'self'/);
