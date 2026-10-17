@@ -1,6 +1,6 @@
 # StockTrail
 
-A local diagnostic CLI for comparing Shopify inventory with what shoppers and search engines see. This repository is now a CLI starter. It does not run an embedded Shopify app or require a web server, tunnel, or deployment.
+A local diagnostic CLI and localhost dashboard for comparing Shopify inventory with what shoppers and search engines see. It is not an embedded Shopify app and requires no tunnel or deployment.
 
 ## Quick start (PowerShell)
 
@@ -29,6 +29,7 @@ npm run dev -- proposal list
 npm run dev -- proposal status <proposal-id>
 npm run dev -- apply <proposal-id>
 npm run dev -- revert <applied-proposal-id>
+npm run dev -- dashboard
 ```
 
 The demo uses two synthetic products, prints one FAIL and one PASS, and saves a JSON evidence report under `.stocktrail/reports`. It makes no network requests. A diagnostic contradiction exits with code **2**; command/configuration errors exit with **1**; success exits with **0**.
@@ -59,6 +60,8 @@ Review proposals with `proposal list` and `proposal status <id>`. Reject one loc
 
 `revert <applied-id>` creates a new proposal from the original private before snapshot; it never writes automatically. Applying that proposal requires typing `REVERT <full-id>`. If restoring the prior content would reintroduce a transient claim or lower readiness, `--acknowledge-revert-risk` is also required. Phase 4 does not edit themes, inventory, variants, prices, handles, status, publications, tags, metafields, or checkout behavior, and it does not use a language model.
 
+`dashboard` starts the React interface at `http://127.0.0.1:4173` and opens it in the default browser. Use `--port <1-65535>` to choose another loopback port or `--no-open` to keep the browser closed. The Overview, Incidents, incident-detail, and Connection screens read the same SQLite index and integrity-checked evidence used by the CLI. Evidence HTML is served as plain text, API responses are never cached, and the server rejects non-loopback host headers. Dashboard reruns require a same-origin action, use fresh browser evidence, and always keep cart submission disabled. Press Ctrl+C in the starting terminal to stop the service.
+
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Read-only Admin import and evidence commands retrieve this credential through the Shopify adapter; it is never sent to the public Ajax endpoint.
 
 To use the command directly while developing:
@@ -75,6 +78,7 @@ After editing TypeScript, rebuild or use `npm run dev -- <command>`. `npm start 
 ## Layout
 
 - `apps/cli/src`: commands and terminal output.
+- `apps/dashboard`: loopback HTTP API and local React/Vite interface.
 - `packages/agent/src`: local configuration, credentials, and workflow orchestration.
 - `packages/shopify/src`: read-only Shopify Admin adapters and catalog collection.
 - `packages/shared/src`: shared domain validation and normalized catalog types.
@@ -95,7 +99,7 @@ npm run build
 ## Next implementation work
 
 1. Add broader theme adapters and explicit market/locale contexts.
-2. Add polling and a localhost dashboard only when needed.
+2. Add scheduled polling and incident deduplication resilience.
 3. Add remediation previews after the diagnostic workflow is stable.
 
 The combined scan without `--browser` remains collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.

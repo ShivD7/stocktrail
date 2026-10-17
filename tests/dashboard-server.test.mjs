@@ -22,6 +22,14 @@ function source() {
         : null;
     },
     async rerun() { return { status: 'failed', passed: 1, failed: 1, inconclusive: 0 }; },
+    async connection() {
+      return {
+        shop: null, configuration: 'unconfigured', credentialStorage: 'unconfigured',
+        catalog: { products: 0, variants: 0, imports: 0 },
+        monitoring: { selected: 0, active: 0, limit: 10 },
+        localData: { evidenceRuns: 0, incidents: 0, testRuns: 0, retention: 'manual' },
+      };
+    },
   };
 }
 
@@ -46,6 +54,7 @@ test('dashboard server exposes loopback JSON routes with safe headers', async ()
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.deepEqual(await response.json(), overview);
+    assert.equal((await fetch(`${server.url}/api/connection`)).status, 200);
 
     const filtered = await fetch(`${server.url}/api/incidents?status=open`);
     assert.deepEqual(await filtered.json(), [{ status: 'open' }]);

@@ -1103,6 +1103,28 @@ export class CatalogRepository {
     };
   }
 
+  dashboardDataCounts(shop: string): { evidenceRuns: number; incidents: number; testRuns: number } {
+    return {
+      evidenceRuns: count(this.database.prepare(`
+        SELECT COUNT(*) AS count FROM evidence_runs
+        JOIN products ON products.id = evidence_runs.product_id
+        JOIN shops ON shops.id = products.shop_id WHERE shops.domain = ?
+      `), shop),
+      incidents: count(this.database.prepare(`
+        SELECT COUNT(*) AS count FROM incidents
+        JOIN products ON products.id = incidents.product_id
+        JOIN shops ON shops.id = products.shop_id WHERE shops.domain = ?
+      `), shop),
+      testRuns: count(this.database.prepare(`
+        SELECT COUNT(DISTINCT test_runs.id) AS count FROM test_runs
+        JOIN test_results ON test_results.test_run_id = test_runs.id
+        JOIN regression_tests ON regression_tests.id = test_results.test_id
+        JOIN products ON products.id = regression_tests.product_id
+        JOIN shops ON shops.id = products.shop_id WHERE shops.domain = ?
+      `), shop),
+    };
+  }
+
   dashboardOverview(shop: string | null): DashboardOverview {
     if (!shop) {
       return dashboardOverviewSchema.parse({

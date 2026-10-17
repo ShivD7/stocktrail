@@ -380,6 +380,8 @@ Phase 4 implementation note: deterministic product-content proposals are impleme
 
 ### Week 5 — October 31–November 6: local dashboard
 
+Current implementation note: the local React/Vite dashboard is implemented and starts from `stocktrail dashboard`. Its loopback-only service exposes scoped overview, incident, evidence, connection, and explicit rerun endpoints; the UI includes responsive Overview, filterable Incidents, three-perspective detail, integrity-checked evidence links, test history, and local setup status. Dashboard reruns use the existing browser regression runner with cart submission disabled. Automated retention/deletion remains Stage 6 work.
+
 - Start the local API and dashboard from the CLI.
 - Build Overview and Incidents screens.
 - Build the three-perspective incident detail view.

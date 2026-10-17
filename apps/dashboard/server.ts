@@ -5,12 +5,15 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openCatalogRepository } from '../../packages/database/src/catalog-repository.js';
 import type {
+  DashboardConnection,
   DashboardIncidentDetail,
   DashboardIncidentSummary,
   DashboardOverview,
   DashboardRerunResult,
 } from '../../packages/shared/src/dashboard.js';
+import { dashboardConnectionSchema } from '../../packages/shared/src/dashboard.js';
 import { runBrowserRegressionTests } from '../../packages/test-runner/src/index.js';
+import { SystemCredentialStore } from '../../packages/agent/src/credentials.js';
 
 export type DashboardDataSource = {
   overview(): Promise<DashboardOverview>;
@@ -18,6 +21,7 @@ export type DashboardDataSource = {
   incident(id: string): Promise<DashboardIncidentDetail | null>;
   evidence(runId: string, artifact: EvidenceArtifactName): Promise<DashboardEvidence | null>;
   rerun(): Promise<DashboardRerunResult>;
+  connection(): Promise<DashboardConnection>;
 };
 
 type EvidenceArtifactName = 'admin.json' | 'ajax.json' | 'html.html' | 'jsonld.json' | 'browser.json';
@@ -79,6 +83,34 @@ export function createDashboardDataSource(directory: string, shop: string | null
       } finally {
         rerunInProgress = false;
       }
+    },
+    async connection() {
+      if (!shop) {
+        return dashboardConnectionSchema.parse({
+          shop: null, configuration: 'unconfigured', credentialStorage: 'unconfigured',
+          catalog: { products: 0, variants: 0, imports: 0 },
+          monitoring: { selected: 0, active: 0, limit: 10 },
+          localData: { evidenceRuns: 0, incidents: 0, testRuns: 0, retention: 'manual' },
+        });
+      }
+      let credentialStorage: DashboardConnection['credentialStorage'];
+      try { credentialStorage = await new SystemCredentialStore().getToken(shop) ? 'stored' : 'missing'; }
+      catch { credentialStorage = 'unavailable'; }
+      const repository = await openCatalogRepository(directory);
+      try {
+        const catalog = repository.catalogCounts(shop);
+        const monitoring = repository.monitoringSummary(shop);
+        const localData = repository.dashboardDataCounts(shop);
+        return dashboardConnectionSchema.parse({
+          shop, configuration: 'ready', credentialStorage, catalog,
+          monitoring: {
+            selected: monitoring.monitoredProductCount,
+            active: monitoring.activeMonitoredProductCount,
+            limit: monitoring.limit,
+          },
+          localData: { ...localData, retention: 'manual' },
+        });
+      } finally { repository.close(); }
     },
   };
 }
@@ -184,6 +216,10 @@ async function routeRequest(
   }
   if (url.pathname === '/api/overview') {
     sendJson(response, 200, await data.overview());
+    return;
+  }
+  if (url.pathname === '/api/connection') {
+    sendJson(response, 200, await data.connection());
     return;
   }
   if (url.pathname === '/api/incidents') {

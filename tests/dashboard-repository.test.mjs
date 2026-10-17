@@ -102,6 +102,8 @@ test('dashboard read model returns overview, incident evidence, and test history
       relativePath: 'jsonld.json', mediaType: 'application/json', sha256: 'b'.repeat(64), bytes: 37,
     });
     assert.equal(repository.dashboardEvidenceArtifact('other.myshopify.com', runId, 'jsonld.json'), null);
+    assert.deepEqual(repository.dashboardDataCounts(shop), { evidenceRuns: 1, incidents: 1, testRuns: 1 });
+    assert.deepEqual(repository.dashboardDataCounts('other.myshopify.com'), { evidenceRuns: 0, incidents: 0, testRuns: 0 });
   } finally {
     repository.close();
     await rm(directory, { recursive: true, force: true });

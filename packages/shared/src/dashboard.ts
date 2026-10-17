@@ -72,9 +72,32 @@ export const dashboardRerunResultSchema = z.object({
   inconclusive: z.number().int().nonnegative(),
 });
 
+export const dashboardConnectionSchema = z.object({
+  shop: z.string().nullable(),
+  configuration: z.enum(['ready', 'unconfigured']),
+  credentialStorage: z.enum(['stored', 'missing', 'unavailable', 'unconfigured']),
+  catalog: z.object({
+    products: z.number().int().nonnegative(),
+    variants: z.number().int().nonnegative(),
+    imports: z.number().int().nonnegative(),
+  }),
+  monitoring: z.object({
+    selected: z.number().int().nonnegative(),
+    active: z.number().int().nonnegative(),
+    limit: z.number().int().positive(),
+  }),
+  localData: z.object({
+    evidenceRuns: z.number().int().nonnegative(),
+    incidents: z.number().int().nonnegative(),
+    testRuns: z.number().int().nonnegative(),
+    retention: z.literal('manual'),
+  }),
+});
+
 export type DashboardOverview = z.infer<typeof dashboardOverviewSchema>;
 export type DashboardIncidentSummary = z.infer<typeof dashboardIncidentSummarySchema>;
 export type DashboardIncidentDetail = z.infer<typeof dashboardIncidentDetailSchema>;
 export type DashboardSourceEvidence = z.infer<typeof dashboardSourceEvidenceSchema>;
 export type DashboardTestHistory = z.infer<typeof dashboardTestHistorySchema>;
 export type DashboardRerunResult = z.infer<typeof dashboardRerunResultSchema>;
+export type DashboardConnection = z.infer<typeof dashboardConnectionSchema>;

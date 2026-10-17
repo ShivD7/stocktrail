@@ -3,6 +3,7 @@ import type { DashboardOverview } from '../../../../packages/shared/src/dashboar
 import { Incidents } from './Incidents.js';
 import { IncidentDetailView } from './IncidentDetail.js';
 import { RerunButton } from './RerunButton.js';
+import { Connection } from './Connection.js';
 
 type Route = 'overview' | 'incidents' | 'connection';
 
@@ -98,18 +99,6 @@ function Overview({ data, onRerun }: { data: DashboardOverview; onRerun: () => v
   );
 }
 
-function Placeholder({ route }: { route: Exclude<Route, 'overview'> }) {
-  return (
-    <section className="page-heading">
-      <div>
-        <p className="eyebrow">Stage 5</p>
-        <h1>{route === 'incidents' ? 'Incidents' : 'Connection'}</h1>
-        <p className="page-intro">This dashboard view is being connected to the local evidence model.</p>
-      </div>
-    </section>
-  );
-}
-
 function AppShell({ data, onRerun }: { data: DashboardOverview; onRerun: () => void }) {
   const route = useRoute();
   const detailMatch = /^#\/incidents\/([0-9a-f-]+)$/.exec(window.location.hash);
@@ -134,7 +123,7 @@ function AppShell({ data, onRerun }: { data: DashboardOverview; onRerun: () => v
       <main id="main-content" tabIndex={-1}>
         {route === 'overview' ? <Overview data={data} onRerun={onRerun} />
           : route === 'incidents' && detailMatch?.[1] ? <IncidentDetailView incidentId={detailMatch[1]} />
-            : route === 'incidents' ? <Incidents /> : <Placeholder route={route} />}
+            : route === 'incidents' ? <Incidents /> : <Connection />}
       </main>
     </div>
   );

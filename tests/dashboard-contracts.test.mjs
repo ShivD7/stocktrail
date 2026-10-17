@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   dashboardIncidentDetailSchema,
+  dashboardConnectionSchema,
   dashboardOverviewSchema,
   dashboardRerunResultSchema,
 } from '../dist/packages/shared/src/dashboard.js';
@@ -14,6 +15,18 @@ test('dashboard overview accepts an empty local state', () => {
     latestScan: null,
   });
   assert.equal(value.latestScan, null);
+});
+
+test('dashboard connection contract never includes credential values or local paths', () => {
+  const value = dashboardConnectionSchema.parse({
+    shop: 'example.myshopify.com', configuration: 'ready', credentialStorage: 'stored',
+    catalog: { products: 4, variants: 8, imports: 2 },
+    monitoring: { selected: 2, active: 2, limit: 10 },
+    localData: { evidenceRuns: 3, incidents: 1, testRuns: 2, retention: 'manual' },
+  });
+  assert.equal(value.credentialStorage, 'stored');
+  assert.equal('token' in value, false);
+  assert.equal('directory' in value, false);
 });
 
 test('dashboard rerun results keep only aggregate test outcomes', () => {
