@@ -19,6 +19,14 @@ import type {
   ProposalStatus,
   ProposalVerificationStatus,
 } from '../../shared/src/proposals.js';
+import {
+  dashboardIncidentDetailSchema,
+  dashboardIncidentSummarySchema,
+  dashboardOverviewSchema,
+  type DashboardIncidentDetail,
+  type DashboardIncidentSummary,
+  type DashboardOverview,
+} from '../../shared/src/dashboard.js';
 
 const DATABASE_FILE = 'stocktrail.sqlite';
 export const MONITORED_PRODUCT_LIMIT = 10;
@@ -567,6 +575,27 @@ function assertionType(ruleId: RuleEvaluation['ruleId']): RegressionAssertion['a
   return 'admin_sellable_not_storefront_blocked';
 }
 
+function variantLabel(selectedOptions: unknown, sku: unknown, variantGid: unknown): string {
+  try {
+    const options = JSON.parse(String(selectedOptions)) as unknown;
+    if (Array.isArray(options)) {
+      const labels = options.flatMap(option => {
+        if (!option || typeof option !== 'object') return [];
+        const value = option as { name?: unknown; value?: unknown };
+        return typeof value.name === 'string' && typeof value.value === 'string'
+          ? [`${value.name}: ${value.value}`]
+          : [];
+      });
+      if (labels.length > 0) return labels.join(' / ');
+    }
+  } catch {
+    // A damaged label must not make the local dashboard unavailable.
+  }
+  if (typeof sku === 'string' && sku.trim()) return `SKU ${sku}`;
+  const suffix = typeof variantGid === 'string' ? variantGid.split('/').at(-1) : null;
+  return suffix ? `Variant ${suffix}` : 'Unknown variant';
+}
+
 export class CatalogRepository {
   constructor(private readonly database: DatabaseSync) {}
 
@@ -1072,6 +1101,148 @@ export class CatalogRepository {
       tests: count(this.database.prepare('SELECT COUNT(*) AS count FROM regression_tests')),
       testRuns: count(this.database.prepare('SELECT COUNT(*) AS count FROM test_runs')),
     };
+  }
+
+  dashboardOverview(shop: string | null): DashboardOverview {
+    if (!shop) {
+      return dashboardOverviewSchema.parse({
+        shop: null,
+        monitoredProducts: { selected: 0, active: 0, limit: MONITORED_PRODUCT_LIMIT },
+        incidents: { open: 0, resolved: 0, ignored: 0 },
+        latestScan: null,
+      });
+    }
+    const monitored = this.monitoringSummary(shop);
+    const incidentCounts = this.database.prepare(`
+      SELECT
+        SUM(CASE WHEN incidents.status = 'open' THEN 1 ELSE 0 END) AS open_count,
+        SUM(CASE WHEN incidents.status = 'resolved' THEN 1 ELSE 0 END) AS resolved_count,
+        SUM(CASE WHEN incidents.status = 'ignored' THEN 1 ELSE 0 END) AS ignored_count
+      FROM incidents
+      JOIN products ON products.id = incidents.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ?
+    `).get(shop) as { open_count: number | null; resolved_count: number | null; ignored_count: number | null };
+    const latest = this.database.prepare(`
+      SELECT evidence_runs.id, products.shopify_gid AS product_gid, products.title,
+        evidence_runs.collection_status, evidence_runs.completed_at, readiness_scores.total
+      FROM evidence_runs
+      JOIN products ON products.id = evidence_runs.product_id
+      JOIN shops ON shops.id = products.shop_id
+      LEFT JOIN readiness_scores ON readiness_scores.evidence_run_id = evidence_runs.id
+      WHERE shops.domain = ?
+      ORDER BY evidence_runs.completed_at DESC, evidence_runs.id DESC
+      LIMIT 1
+    `).get(shop) as Record<string, unknown> | undefined;
+    return dashboardOverviewSchema.parse({
+      shop,
+      monitoredProducts: {
+        selected: monitored.monitoredProductCount,
+        active: monitored.activeMonitoredProductCount,
+        limit: monitored.limit,
+      },
+      incidents: {
+        open: Number(incidentCounts.open_count ?? 0),
+        resolved: Number(incidentCounts.resolved_count ?? 0),
+        ignored: Number(incidentCounts.ignored_count ?? 0),
+      },
+      latestScan: latest ? {
+        id: latest.id,
+        productGid: latest.product_gid,
+        productTitle: latest.title,
+        status: latest.collection_status,
+        completedAt: latest.completed_at,
+        readinessScore: latest.total,
+      } : null,
+    });
+  }
+
+  listDashboardIncidents(shop: string, status?: 'open' | 'resolved' | 'ignored'): DashboardIncidentSummary[] {
+    const rows = this.database.prepare(`
+      SELECT incidents.id, products.shopify_gid AS product_gid, products.title,
+        incidents.variant_gid, variants.selected_options_json, variants.sku,
+        incidents.rule_id, incidents.status, incidents.severity, incidents.first_seen_at,
+        incidents.last_seen_at, incidents.last_evaluated_at, incidents.occurrence_count,
+        rule_evaluations.reason_code
+      FROM incidents
+      JOIN products ON products.id = incidents.product_id
+      JOIN shops ON shops.id = products.shop_id
+      JOIN rule_evaluations ON rule_evaluations.id = incidents.latest_evaluation_id
+      LEFT JOIN variants ON variants.product_id = products.id
+        AND variants.shopify_gid = incidents.variant_gid
+      WHERE shops.domain = ? AND (? IS NULL OR incidents.status = ?)
+      ORDER BY
+        CASE incidents.status WHEN 'open' THEN 0 WHEN 'resolved' THEN 1 ELSE 2 END,
+        incidents.last_seen_at DESC,
+        incidents.id
+    `).all(shop, status ?? null, status ?? null) as Array<Record<string, unknown>>;
+    return rows.map(row => dashboardIncidentSummarySchema.parse({
+      id: row.id,
+      productGid: row.product_gid,
+      productTitle: row.title,
+      variantGid: row.variant_gid,
+      variantLabel: variantLabel(row.selected_options_json, row.sku, row.variant_gid),
+      ruleId: row.rule_id,
+      status: row.status,
+      severity: row.severity,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      lastEvaluatedAt: row.last_evaluated_at,
+      occurrenceCount: row.occurrence_count,
+      latestReasonCode: row.reason_code,
+    }));
+  }
+
+  dashboardIncident(shop: string, incidentId: string): DashboardIncidentDetail | null {
+    const summary = this.listDashboardIncidents(shop).find(value => value.id === incidentId);
+    if (!summary) return null;
+    const row = this.database.prepare(`
+      SELECT products.online_store_url, rule_evaluations.evidence_run_id
+      FROM incidents
+      JOIN products ON products.id = incidents.product_id
+      JOIN shops ON shops.id = products.shop_id
+      JOIN rule_evaluations ON rule_evaluations.id = incidents.latest_evaluation_id
+      WHERE shops.domain = ? AND incidents.id = ?
+    `).get(shop, incidentId) as { online_store_url: string | null; evidence_run_id: string };
+    const sources = (this.database.prepare(`
+      SELECT evidence_sources.source, evidence_sources.outcome, evidence_sources.reason_code,
+        evidence_sources.item_count, evidence_artifacts.relative_path
+      FROM evidence_sources
+      LEFT JOIN evidence_artifacts ON evidence_artifacts.run_id = evidence_sources.run_id
+        AND evidence_artifacts.source = evidence_sources.source
+      WHERE evidence_sources.run_id = ?
+      ORDER BY CASE evidence_sources.source
+        WHEN 'admin' THEN 0 WHEN 'ajax' THEN 1 WHEN 'browser' THEN 2
+        WHEN 'jsonld' THEN 3 ELSE 4 END
+    `).all(row.evidence_run_id) as Array<Record<string, unknown>>).map(source => ({
+      source: source.source,
+      outcome: source.outcome,
+      reasonCode: source.reason_code,
+      itemCount: source.item_count,
+      artifactPath: source.relative_path ?? null,
+    }));
+    const testHistory = (this.database.prepare(`
+      SELECT test_runs.id AS run_id, test_results.outcome, test_results.reason_code,
+        test_runs.completed_at
+      FROM regression_tests
+      JOIN test_results ON test_results.test_id = regression_tests.id
+      JOIN test_runs ON test_runs.id = test_results.test_run_id
+      WHERE regression_tests.incident_id = ?
+      ORDER BY test_runs.completed_at DESC, test_runs.id DESC
+      LIMIT 20
+    `).all(incidentId) as Array<Record<string, unknown>>).map(history => ({
+      runId: history.run_id,
+      outcome: history.outcome,
+      reasonCode: history.reason_code,
+      completedAt: history.completed_at,
+    }));
+    return dashboardIncidentDetailSchema.parse({
+      ...summary,
+      productUrl: row.online_store_url,
+      latestEvidenceRunId: row.evidence_run_id,
+      sources,
+      testHistory,
+    });
   }
 
   latestProposalEvidence(shop: string, productGid: string): LatestProposalEvidence | null {
