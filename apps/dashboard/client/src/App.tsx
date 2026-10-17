@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DashboardOverview } from '../../../../packages/shared/src/dashboard.js';
+import { Incidents } from './Incidents.js';
 
 type Route = 'overview' | 'incidents' | 'connection';
 
@@ -128,7 +129,7 @@ function AppShell({ data }: { data: DashboardOverview }) {
         </div>
       </aside>
       <main id="main-content" tabIndex={-1}>
-        {route === 'overview' ? <Overview data={data} /> : <Placeholder route={route} />}
+        {route === 'overview' ? <Overview data={data} /> : route === 'incidents' ? <Incidents /> : <Placeholder route={route} />}
       </main>
     </div>
   );
