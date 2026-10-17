@@ -46,6 +46,10 @@ test('dashboard server exposes loopback JSON routes with safe headers', async ()
     assert.equal((await fetch(`${server.url}/api/incidents?status=invalid`)).status, 400);
     assert.equal((await fetch(`${server.url}/api/incidents/${incidentId}`)).status, 200);
     assert.equal((await fetch(`${server.url}/api/incidents/22222222-2222-4222-8222-222222222222`)).status, 404);
+    const page = await fetch(server.url);
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-security-policy'), /default-src 'self'/);
+    assert.match(await page.text(), /<title>StockTrail<\/title>/);
   } finally {
     await server.close();
   }

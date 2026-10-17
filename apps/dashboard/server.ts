@@ -1,4 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openCatalogRepository } from '../../packages/database/src/catalog-repository.js';
 import type {
   DashboardIncidentDetail,
@@ -16,6 +19,8 @@ export type DashboardServer = {
   url: string;
   close(): Promise<void>;
 };
+
+const staticRoot = join(dirname(fileURLToPath(import.meta.url)), 'client');
 
 export function createDashboardDataSource(directory: string, shop: string | null): DashboardDataSource {
   return {
@@ -55,6 +60,30 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
   response.end(body);
 }
 
+async function sendStatic(response: ServerResponse, pathname: string): Promise<boolean> {
+  const relativePath = pathname === '/' ? 'index.html' : pathname.slice(1);
+  if (relativePath !== 'index.html' && !/^assets\/[a-zA-Z0-9_.-]+$/.test(relativePath)) return false;
+  let body: Buffer;
+  try { body = await readFile(join(staticRoot, relativePath)); }
+  catch { return false; }
+  const contentTypes: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.map': 'application/json; charset=utf-8',
+  };
+  response.writeHead(200, {
+    'Content-Type': contentTypes[extname(relativePath)] ?? 'application/octet-stream',
+    'Content-Length': body.byteLength,
+    'Cache-Control': relativePath === 'index.html' ? 'no-store' : 'public, max-age=31536000, immutable',
+    'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+  });
+  response.end(body);
+  return true;
+}
+
 function routeId(pathname: string): string | null {
   const match = /^\/api\/incidents\/([0-9a-f-]+)$/.exec(pathname);
   return match?.[1] ?? null;
@@ -75,6 +104,7 @@ async function routeRequest(
     return;
   }
   const url = new URL(request.url ?? '/', 'http://localhost');
+  if (!url.pathname.startsWith('/api/') && await sendStatic(response, url.pathname)) return;
   if (url.pathname === '/api/overview') {
     sendJson(response, 200, await data.overview());
     return;
