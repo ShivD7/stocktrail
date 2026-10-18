@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { openCatalogRepository } from '../dist/packages/database/src/catalog-repository.js';
+import { runBrowserRegressionTestForIncident } from '../dist/packages/test-runner/src/index.js';
 
 const entry = resolve('dist/apps/cli/src/index.js');
 const shop = 'private-example.myshopify.com';
@@ -12,6 +13,55 @@ const productGid = 'gid://shopify/Product/8800';
 const variantGid = 'gid://shopify/ProductVariant/8801';
 const runId = '88888888-8888-4888-8888-888888888888';
 const observedAt = '2026-10-16T12:00:00.000Z';
+
+test('incident rerun executes and records only the selected shop-scoped assertion with cart add disabled', async () => {
+  const incidentId = '11111111-1111-4111-8111-111111111111';
+  const selectedTestId = '22222222-2222-4222-8222-222222222222';
+  const unrelatedTestId = '33333333-3333-4333-8333-333333333333';
+  const selected = {
+    id: selectedTestId, incidentId, productGid,
+    assertion: {
+      schemaVersion: 1, ruleVersion: 1, assertionType: 'rule_must_pass', ruleId: 'ST-001',
+      productId: productGid, variantId: variantGid,
+    },
+  };
+  const recorded = [];
+  const scans = [];
+  const repository = {
+    activeRegressionTestForIncident(requestedShop, requestedIncident) {
+      assert.equal(requestedShop, shop);
+      assert.equal(requestedIncident, incidentId);
+      return selected;
+    },
+    listActiveRegressionTests() {
+      throw new Error(`global test enumeration must not run: ${unrelatedTestId}`);
+    },
+    recordRegressionTestRun(_started, _completed, results) {
+      recorded.push(...results);
+      return { id: '44444444-4444-4444-8444-444444444444', status: 'passed', passed: 1, failed: 0, inconclusive: 0 };
+    },
+    close() {},
+  };
+  const result = await runBrowserRegressionTestForIncident('unused', shop, incidentId, {
+    async openRepository() { return repository; },
+    async scan(directory, requestedProduct, options) {
+      scans.push({ directory, requestedProduct, options });
+      return {
+        evidenceRunId: runId,
+        evaluations: [{
+          schemaVersion: 1, ruleVersion: 1, ruleId: 'ST-001', productId: productGid,
+          variantId: variantGid, result: 'pass', severity: 'medium', reasonCode: 'selected_pass',
+          match: null, requiredSources: ['admin', 'jsonld'], evidenceRunId: runId, evaluatedAt: observedAt,
+        }],
+      };
+    },
+    now: () => new Date(observedAt),
+  });
+  assert.deepEqual(scans, [{ directory: 'unused', requestedProduct: productGid, options: { browser: true, cartAdd: false } }]);
+  assert.deepEqual(recorded, [{ testId: selectedTestId, outcome: 'pass', reasonCode: 'selected_pass', evidenceRunId: runId }]);
+  assert.equal(recorded.some(value => value.testId === unrelatedTestId), false);
+  assert.deepEqual(result.executions.map(value => value.testId), [selectedTestId]);
+});
 
 function readiness() {
   const definitions = [

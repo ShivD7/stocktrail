@@ -23,9 +23,15 @@ import {
   dashboardIncidentDetailSchema,
   dashboardIncidentSummarySchema,
   dashboardOverviewSchema,
+  dashboardProductDetailSchema,
+  dashboardProductSummarySchema,
+  dashboardScoreDistributionSchema,
   type DashboardIncidentDetail,
   type DashboardIncidentSummary,
   type DashboardOverview,
+  type DashboardProductDetail,
+  type DashboardProductSummary,
+  type DashboardScoreDistribution,
 } from '../../shared/src/dashboard.js';
 
 const DATABASE_FILE = 'stocktrail.sqlite';
@@ -136,6 +142,7 @@ export type StoredProposal = {
   approvedAt: string | null;
   completedAt: string | null;
   proposalArtifactSha256: string;
+  proposalArtifactBytes: number;
 };
 
 type Migration = string | ((database: DatabaseSync) => void);
@@ -573,6 +580,16 @@ function assertionType(ruleId: RuleEvaluation['ruleId']): RegressionAssertion['a
   if (ruleId === 'ST-001') return 'admin_unavailable_not_jsonld_in_stock';
   if (ruleId === 'ST-002') return 'admin_unavailable_not_storefront_permitted';
   return 'admin_sellable_not_storefront_blocked';
+}
+
+function productDescriptionText(value: string): string {
+  return value.replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, ' ')
+    .replace(/<[^>]+>/gu, ' ')
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/giu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 100_000);
 }
 
 function variantLabel(selectedOptions: unknown, sku: unknown, variantGid: unknown): string {
@@ -1030,6 +1047,37 @@ export class CatalogRepository {
     }));
   }
 
+  activeRegressionTestForIncident(shop: string, incidentId: string): StoredRegressionTest | null {
+    const row = this.database.prepare(`
+      SELECT regression_tests.id, regression_tests.incident_id, regression_tests.variant_gid,
+        regression_tests.rule_id, regression_tests.rule_version, regression_tests.assertion_type,
+        products.shopify_gid AS product_gid
+      FROM regression_tests
+      JOIN incidents ON incidents.id = regression_tests.incident_id
+      JOIN products ON products.id = regression_tests.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ? AND incidents.id = ?
+        AND regression_tests.enabled = 1 AND incidents.status = 'open'
+      LIMIT 1
+    `).get(shop, incidentId) as {
+      id: string; incident_id: string; variant_gid: string; rule_id: RegressionAssertion['ruleId'];
+      rule_version: 1; assertion_type: RegressionAssertion['assertionType']; product_gid: string;
+    } | undefined;
+    return row ? {
+      id: row.id,
+      incidentId: row.incident_id,
+      productGid: row.product_gid,
+      assertion: {
+        schemaVersion: 1,
+        ruleVersion: row.rule_version,
+        assertionType: row.assertion_type,
+        ruleId: row.rule_id,
+        productId: row.product_gid,
+        variantId: row.variant_gid,
+      },
+    } : null;
+  }
+
   recordRegressionTestRun(
     startedAt: string,
     completedAt: string,
@@ -1132,6 +1180,10 @@ export class CatalogRepository {
         monitoredProducts: { selected: 0, active: 0, limit: MONITORED_PRODUCT_LIMIT },
         incidents: { open: 0, resolved: 0, ignored: 0 },
         latestScan: null,
+        scoreDistribution: {
+          buckets: [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]].map(([minimum, maximum]) => ({ minimum, maximum, count: 0 })),
+          inconclusive: 0,
+        },
       });
     }
     const monitored = this.monitoringSummary(shop);
@@ -1176,6 +1228,144 @@ export class CatalogRepository {
         completedAt: latest.completed_at,
         readinessScore: latest.total,
       } : null,
+      scoreDistribution: this.dashboardScoreDistribution(shop),
+    });
+  }
+
+  dashboardProducts(shop: string): DashboardProductSummary[] {
+    const rows = this.database.prepare(`
+      SELECT products.id, products.shopify_gid, products.title, products.status,
+        products.is_present,
+        CASE WHEN monitored_products.product_id IS NULL THEN 0 ELSE 1 END AS monitored,
+        COUNT(variants.id) AS variant_count,
+        SUM(CASE WHEN variants.sellable_online_quantity > 0 THEN 1 ELSE 0 END) AS sellable_count,
+        SUM(CASE WHEN variants.sellable_online_quantity <= 0 THEN 1 ELSE 0 END) AS unavailable_count,
+        SUM(CASE WHEN variants.id IS NOT NULL AND variants.sellable_online_quantity IS NULL THEN 1 ELSE 0 END) AS unknown_count
+      FROM products
+      JOIN shops ON shops.id = products.shop_id
+      LEFT JOIN monitored_products ON monitored_products.product_id = products.id
+        AND monitored_products.shop_id = products.shop_id
+      LEFT JOIN variants ON variants.product_id = products.id AND variants.is_present = 1
+      WHERE shops.domain = ?
+      GROUP BY products.id
+      ORDER BY products.title COLLATE NOCASE, products.shopify_gid
+    `).all(shop) as Array<Record<string, unknown>>;
+    return rows.map(row => {
+      const productId = Number(row.id);
+      const latest = this.database.prepare(`
+        SELECT evidence_runs.id, evidence_runs.collection_status, evidence_runs.completed_at,
+          readiness_scores.total
+        FROM evidence_runs
+        LEFT JOIN readiness_scores ON readiness_scores.evidence_run_id = evidence_runs.id
+        WHERE evidence_runs.product_id = ?
+        ORDER BY evidence_runs.completed_at DESC, evidence_runs.id DESC LIMIT 1
+      `).get(productId) as Record<string, unknown> | undefined;
+      const weakest = latest ? this.database.prepare(`
+        SELECT component, outcome, points, weight FROM readiness_components
+        WHERE evidence_run_id = ?
+        ORDER BY CASE outcome WHEN 'not_ready' THEN 0 WHEN 'inconclusive' THEN 1 ELSE 2 END,
+          CASE WHEN points IS NULL THEN -1.0 ELSE CAST(points AS REAL) / weight END,
+          weight DESC, component
+        LIMIT 1
+      `).get(String(latest.id)) as Record<string, unknown> | undefined : undefined;
+      const openIncidentCount = count(this.database.prepare(`
+        SELECT COUNT(*) AS count FROM incidents WHERE product_id = ? AND status = 'open'
+      `), productId);
+      const proposal = this.latestProposalForProduct(shop, String(row.shopify_gid));
+      const monitored = Number(row.monitored) === 1;
+      const present = Number(row.is_present) === 1;
+      const allowedActions: DashboardProductSummary['allowedActions'] = [];
+      if (present) allowedActions.push(monitored ? 'unmonitor' : 'monitor');
+      if (present && monitored) allowedActions.push('scan');
+      if (latest?.total !== null && latest?.total !== undefined) allowedActions.push('improve');
+      if (proposal) allowedActions.push('view_proposal');
+      return dashboardProductSummarySchema.parse({
+        productGid: row.shopify_gid,
+        title: row.title,
+        status: row.status,
+        present,
+        monitored,
+        variantCount: Number(row.variant_count),
+        inventory: {
+          sellableVariants: Number(row.sellable_count ?? 0),
+          unavailableVariants: Number(row.unavailable_count ?? 0),
+          unknownVariants: Number(row.unknown_count ?? 0),
+        },
+        latestScan: latest ? {
+          id: latest.id,
+          status: latest.collection_status,
+          completedAt: latest.completed_at,
+        } : null,
+        readinessScore: latest?.total ?? null,
+        weakestComponent: weakest ? {
+          id: weakest.component,
+          outcome: weakest.outcome,
+          points: weakest.points,
+          weight: weakest.weight,
+        } : null,
+        openIncidentCount,
+        latestProposal: proposal ? {
+          id: proposal.id,
+          kind: proposal.kind,
+          status: proposal.status,
+          verificationStatus: proposal.verificationStatus,
+          currentScore: proposal.currentScore,
+          predictedScore: proposal.predictedScore,
+          verifiedScore: proposal.verifiedScore,
+          createdAt: proposal.createdAt,
+        } : null,
+        allowedActions,
+      });
+    });
+  }
+
+  dashboardProduct(shop: string, productGid: string): DashboardProductDetail | null {
+    this.validateProductGid(productGid);
+    const summary = this.dashboardProducts(shop).find(value => value.productGid === productGid);
+    if (!summary) return null;
+    const row = this.database.prepare(`
+      SELECT products.description_html, products.seo_title, products.seo_description,
+        products.online_store_url
+      FROM products JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ? AND products.shopify_gid = ?
+    `).get(shop, productGid) as {
+      description_html: string; seo_title: string | null; seo_description: string | null;
+      online_store_url: string | null;
+    } | undefined;
+    if (!row) return null;
+    return dashboardProductDetailSchema.parse({
+      ...summary,
+      productUrl: row.online_store_url,
+      descriptionText: productDescriptionText(row.description_html),
+      seo: { title: row.seo_title, description: row.seo_description },
+      readiness: summary.latestScan ? this.readinessForRun(summary.latestScan.id) : null,
+    });
+  }
+
+  dashboardScoreDistribution(shop: string): DashboardScoreDistribution {
+    const rows = this.database.prepare(`
+      WITH ranked AS (
+        SELECT products.id AS product_id, readiness_scores.total,
+          ROW_NUMBER() OVER (
+            PARTITION BY products.id
+            ORDER BY evidence_runs.completed_at DESC, evidence_runs.id DESC
+          ) AS rank
+        FROM products
+        JOIN shops ON shops.id = products.shop_id
+        LEFT JOIN evidence_runs ON evidence_runs.product_id = products.id
+        LEFT JOIN readiness_scores ON readiness_scores.evidence_run_id = evidence_runs.id
+        WHERE shops.domain = ?
+      )
+      SELECT total FROM ranked WHERE rank = 1
+    `).all(shop) as Array<{ total: number | null }>;
+    const ranges = [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]] as const;
+    return dashboardScoreDistributionSchema.parse({
+      buckets: ranges.map(([minimum, maximum]) => ({
+        minimum,
+        maximum,
+        count: rows.filter(row => row.total !== null && row.total >= minimum && row.total <= maximum).length,
+      })),
+      inconclusive: rows.filter(row => row.total === null).length,
     });
   }
 
@@ -1258,11 +1448,35 @@ export class CatalogRepository {
       reasonCode: history.reason_code,
       completedAt: history.completed_at,
     }));
+    const perspective = (
+      name: 'admin' | 'storefront' | 'search',
+      candidates: Array<'admin' | 'ajax' | 'jsonld' | 'browser'>,
+    ) => {
+      const source = candidates.map(candidate => sources.find(value => value.source === candidate)).find(Boolean);
+      return source ? {
+        perspective: name,
+        source: source.source,
+        outcome: source.outcome,
+        reasonCode: source.reasonCode,
+        itemCount: source.itemCount,
+      } : {
+        perspective: name,
+        source: null,
+        outcome: 'inconclusive',
+        reasonCode: 'source_unavailable',
+        itemCount: 0,
+      };
+    };
     return dashboardIncidentDetailSchema.parse({
       ...summary,
       productUrl: row.online_store_url,
       latestEvidenceRunId: row.evidence_run_id,
       sources,
+      comparison: [
+        perspective('admin', ['admin']),
+        perspective('storefront', ['browser', 'ajax']),
+        perspective('search', ['jsonld']),
+      ],
       testHistory,
     });
   }
@@ -1390,11 +1604,56 @@ export class CatalogRepository {
     this.transaction(() => this.insertProposalArtifacts(proposalId, artifacts));
   }
 
+  getProposalForShop(shop: string, proposalId: string): StoredProposal | null {
+    const row = this.database.prepare(`
+      SELECT proposals.*, products.shopify_gid,
+        (SELECT sha256 FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT bytes FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_bytes,
+        (SELECT total FROM readiness_scores
+          WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
+      FROM proposals
+      JOIN products ON products.id = proposals.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ? AND proposals.id = ?
+    `).get(shop, proposalId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const fields = this.database.prepare('SELECT field FROM proposal_fields WHERE proposal_id = ? ORDER BY field')
+      .all(proposalId) as Array<{ field: string }>;
+    return this.storedProposal(row, fields.map(value => value.field));
+  }
+
+  latestProposalForProduct(shop: string, productGid: string): StoredProposal | null {
+    const row = this.database.prepare(`
+      SELECT proposals.*, products.shopify_gid,
+        (SELECT sha256 FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT bytes FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_bytes,
+        (SELECT total FROM readiness_scores
+          WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
+      FROM proposals
+      JOIN products ON products.id = proposals.product_id
+      JOIN shops ON shops.id = products.shop_id
+      WHERE shops.domain = ? AND products.shopify_gid = ?
+      ORDER BY proposals.created_at DESC, proposals.id DESC
+      LIMIT 1
+    `).get(shop, productGid) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const id = String(row.id);
+    const fields = this.database.prepare('SELECT field FROM proposal_fields WHERE proposal_id = ? ORDER BY field')
+      .all(id) as Array<{ field: string }>;
+    return this.storedProposal(row, fields.map(value => value.field));
+  }
+
   getProposal(proposalId: string): StoredProposal {
     const row = this.database.prepare(`
       SELECT proposals.*, products.shopify_gid,
         (SELECT sha256 FROM proposal_artifacts
           WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT bytes FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_bytes,
         (SELECT total FROM readiness_scores
           WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
       FROM proposals JOIN products ON products.id = proposals.product_id
@@ -1412,6 +1671,8 @@ export class CatalogRepository {
       SELECT proposals.*, products.shopify_gid,
         (SELECT sha256 FROM proposal_artifacts
           WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_sha256,
+        (SELECT bytes FROM proposal_artifacts
+          WHERE proposal_artifacts.proposal_id = proposals.id AND role = 'proposal') AS proposal_bytes,
         (SELECT total FROM readiness_scores
           WHERE readiness_scores.evidence_run_id = proposals.verification_evidence_run_id) AS verified_score
       FROM proposals JOIN products ON products.id = proposals.product_id
@@ -1516,6 +1777,37 @@ export class CatalogRepository {
     });
   }
 
+  private readinessForRun(evidenceRunId: string): ReadinessScore | null {
+    const row = this.database.prepare(`
+      SELECT total, known_points, known_max FROM readiness_scores WHERE evidence_run_id = ?
+    `).get(evidenceRunId) as { total: number | null; known_points: number; known_max: number } | undefined;
+    if (!row) return null;
+    const components = this.database.prepare(`
+      SELECT component, weight, outcome, points, reason_codes_json, evidence_refs_json
+      FROM readiness_components WHERE evidence_run_id = ? ORDER BY rowid
+    `).all(evidenceRunId) as Array<{
+      component: ReadinessScore['components'][number]['id'];
+      weight: ReadinessScore['components'][number]['weight'];
+      outcome: ReadinessScore['components'][number]['outcome'];
+      points: number | null; reason_codes_json: string; evidence_refs_json: string;
+    }>;
+    return readinessScoreSchema.parse({
+      schemaVersion: 1,
+      total: row.total,
+      knownPoints: row.known_points,
+      knownMax: row.known_max,
+      components: components.map(component => ({
+        id: component.component,
+        weight: component.weight,
+        outcome: component.outcome,
+        points: component.points,
+        reasonCodes: JSON.parse(component.reason_codes_json) as unknown,
+        evidenceRefs: JSON.parse(component.evidence_refs_json) as unknown,
+      })),
+      limitation: 'Diagnostic inventory-search readiness; not an SEO ranking claim.',
+    });
+  }
+
   private storedProposal(row: Record<string, unknown>, fields: string[]): StoredProposal {
     const current = readinessScoreSchema.parse(JSON.parse(String(row.current_readiness_json)));
     const predicted = readinessScoreSchema.parse(JSON.parse(String(row.predicted_readiness_json)));
@@ -1537,6 +1829,7 @@ export class CatalogRepository {
       approvedAt: row.approved_at === null ? null : String(row.approved_at),
       completedAt: row.completed_at === null ? null : String(row.completed_at),
       proposalArtifactSha256: String(row.proposal_sha256),
+      proposalArtifactBytes: Number(row.proposal_bytes),
     };
   }
 

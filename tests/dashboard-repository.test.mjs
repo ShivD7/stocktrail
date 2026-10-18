@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openCatalogRepository } from '../dist/packages/database/src/catalog-repository.js';
+import { createDashboardDataSource } from '../dist/apps/dashboard/server.js';
 
 const shop = 'example.myshopify.com';
 const productGid = 'gid://shopify/Product/9000';
@@ -85,17 +87,33 @@ test('dashboard read model returns overview, incident evidence, and test history
     assert.equal(overview.incidents.open, 1);
     assert.equal(overview.latestScan.productTitle, 'Synthetic trail shoe');
     assert.equal(overview.latestScan.readinessScore, 70);
+    assert.equal(overview.scoreDistribution.buckets[3].count, 1);
+    assert.equal(overview.scoreDistribution.inconclusive, 0);
+
+    const [productSummary] = repository.dashboardProducts(shop);
+    assert.equal(productSummary.readinessScore, 70);
+    assert.equal(productSummary.weakestComponent.id, 'availability_agreement');
+    assert.deepEqual(productSummary.inventory, { sellableVariants: 0, unavailableVariants: 1, unknownVariants: 0 });
+    assert.equal(productSummary.openIncidentCount, 1);
+    assert.deepEqual(productSummary.allowedActions, ['unmonitor', 'scan', 'improve']);
+    const productDetail = repository.dashboardProduct(shop, productGid);
+    assert.equal(productDetail.descriptionText, 'Synthetic');
+    assert.equal(productDetail.readiness.total, 70);
+    assert.equal(repository.dashboardProduct('other.myshopify.com', productGid), null);
 
     const [incident] = repository.listDashboardIncidents(shop, 'open');
     assert.equal(incident.variantLabel, 'Color: Red / Size: 10');
     assert.equal(incident.latestReasonCode, 'jsonld_in_stock_while_admin_unavailable');
 
     const [regression] = repository.listActiveRegressionTests();
+    assert.equal(repository.activeRegressionTestForIncident(shop, incident.id)?.id, regression.id);
+    assert.equal(repository.activeRegressionTestForIncident('other.myshopify.com', incident.id), null);
     repository.recordRegressionTestRun(observedAt, '2026-10-16T12:00:03.000Z', [{
       testId: regression.id, outcome: 'fail', reasonCode: 'still_in_stock', evidenceRunId: runId,
     }]);
     const detail = repository.dashboardIncident(shop, incident.id);
     assert.equal(detail.sources.length, 2);
+    assert.deepEqual(detail.comparison.map(value => value.perspective), ['admin', 'storefront', 'search']);
     assert.equal(detail.sources[1].artifactPath, 'jsonld.json');
     assert.equal(detail.testHistory[0].outcome, 'fail');
     assert.deepEqual(repository.dashboardEvidenceArtifact(shop, runId, 'jsonld.json'), {
@@ -117,10 +135,54 @@ test('dashboard read model keeps an unconfigured store empty', async () => {
     const overview = repository.dashboardOverview(null);
     assert.equal(overview.shop, null);
     assert.equal(overview.latestScan, null);
+    assert.deepEqual(overview.scoreDistribution.buckets.map(value => value.count), [0, 0, 0, 0, 0]);
     assert.deepEqual(repository.listDashboardIncidents(shop), []);
     assert.equal(repository.dashboardIncident(shop, '11111111-1111-4111-8111-111111111111'), null);
   } finally {
     repository.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('fresh integrity-checked Admin evidence overrides a stale imported product URL, including explicit null', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'stocktrail-dashboard-fresh-url-'));
+  const report = {
+    schemaVersion: 1, mode: 'admin_only', source: 'shopify_admin_graphql', productId: productGid,
+    observationWindow: { startedAt: observedAt, completedAt: observedAt },
+    apiVersion: { requested: '2026-10', response: '2026-10' }, pageCount: 1, complete: true,
+    limitations: ['Synthetic fixture.'],
+    product: {
+      id: productGid, title: 'Synthetic trail shoe', handle: 'synthetic-trail-shoe',
+      descriptionHtml: '<p>Synthetic</p>', seo: { title: null, description: null }, status: 'ACTIVE',
+      onlineStoreUrl: null, updatedAt: observedAt,
+      variants: [{
+        id: variantGid, legacyResourceId: '9001', sku: 'SYNTH-10', selectedOptions: [],
+        inventoryPolicy: 'DENY', inventoryQuantity: 0, sellableOnlineQuantity: 0, updatedAt: observedAt,
+        inventoryItem: { id: 'gid://shopify/InventoryItem/9002', tracked: true, updatedAt: observedAt },
+      }],
+    },
+  };
+  const text = JSON.stringify(report) + '\n';
+  const scanDirectory = join(directory, 'artifacts', 'scans', runId);
+  await mkdir(scanDirectory, { recursive: true });
+  await writeFile(join(scanDirectory, 'admin.json'), text);
+  const repository = await openCatalogRepository(directory);
+  try {
+    repository.importCatalog(shop, [product()], true, { observedAt, evidenceSource: 'shopify_admin_graphql', apiVersion: '2026-10' });
+    repository.recordEvidenceRun(shop, productGid, {
+      runId, status: 'complete', startedAt: observedAt, completedAt: observedAt,
+      sources: [{ source: 'admin', outcome: 'observed', reasonCode: null, status: null, contentType: null, itemCount: 1 }],
+      artifacts: [{
+        source: 'admin', relativePath: 'admin.json', mediaType: 'application/json',
+        sha256: createHash('sha256').update(text).digest('hex'), bytes: Buffer.byteLength(text),
+      }],
+    });
+  } finally { repository.close(); }
+  try {
+    const data = createDashboardDataSource(directory, shop);
+    const detail = await data.product(productGid);
+    assert.equal(detail.productUrl, null);
+    await unlink(join(scanDirectory, 'admin.json'));
+    await assert.rejects(data.product(productGid), error => error?.code === 'artifact_integrity_failed');
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

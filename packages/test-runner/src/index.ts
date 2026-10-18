@@ -29,6 +29,19 @@ export type TestRunnerDependencies = {
   now(): Date;
 };
 
+export type BrowserRegressionDependencies = {
+  openRepository(directory: string): Promise<CatalogRepository>;
+  scan(
+    directory: string,
+    productGid: string,
+    options: { browser: true; cartAdd: false },
+  ): Promise<{
+    evaluations: RuleEvaluation[];
+    evidenceRunId: string;
+  }>;
+  now(): Date;
+};
+
 export function evaluateStoredAssertion(
   test: StoredRegressionTest,
   evaluations: RuleEvaluation[],
@@ -63,19 +76,13 @@ const defaultDependencies: TestRunnerDependencies = {
   now: () => new Date(),
 };
 
-export async function runStoredRegressionTests(
+async function executeSelectedTests(
   directory: string,
-  dependencies: TestRunnerDependencies = defaultDependencies,
+  tests: StoredRegressionTest[],
+  dependencies: TestRunnerDependencies,
+  unavailableReason?: string,
 ): Promise<StoredTestRunResult> {
-  let repository = await dependencies.openRepository(directory);
-  let tests: StoredRegressionTest[];
-  try {
-    tests = repository.listActiveRegressionTests();
-  } finally {
-    repository.close();
-  }
   if (tests.length === 0) return { summary: null, executions: [] };
-
   const startedAt = dependencies.now().toISOString();
   const groups = new Map<string, StoredRegressionTest[]>();
   for (const test of tests) groups.set(test.productGid, [...(groups.get(test.productGid) ?? []), test]);
@@ -84,14 +91,14 @@ export async function runStoredRegressionTests(
     const collected = await dependencies.collectProduct(productGid, productTests);
     for (const test of productTests) {
       const execution = evaluateStoredAssertion(test, collected.evaluations, collected.evidenceRunId);
-      if (dependencies === defaultDependencies && execution.reasonCode === 'fresh_rule_evaluation_unavailable') {
-        execution.reasonCode = 'browser_runtime_not_integrated';
+      if (unavailableReason && execution.reasonCode === 'fresh_rule_evaluation_unavailable') {
+        execution.reasonCode = unavailableReason;
       }
       executions.push(execution);
     }
   }
   const completedAt = dependencies.now().toISOString();
-  repository = await dependencies.openRepository(directory);
+  const repository = await dependencies.openRepository(directory);
   try {
     const summary = repository.recordRegressionTestRun(
       startedAt,
@@ -107,6 +114,41 @@ export async function runStoredRegressionTests(
   } finally {
     repository.close();
   }
+}
+
+export async function runStoredRegressionTests(
+  directory: string,
+  dependencies: TestRunnerDependencies = defaultDependencies,
+): Promise<StoredTestRunResult> {
+  let repository = await dependencies.openRepository(directory);
+  let tests: StoredRegressionTest[];
+  try {
+    tests = repository.listActiveRegressionTests();
+  } finally {
+    repository.close();
+  }
+  return executeSelectedTests(
+    directory,
+    tests,
+    dependencies,
+    dependencies === defaultDependencies ? 'browser_runtime_not_integrated' : undefined,
+  );
+}
+
+export async function runStoredRegressionTestForIncident(
+  directory: string,
+  shop: string,
+  incidentId: string,
+  dependencies: TestRunnerDependencies,
+): Promise<StoredTestRunResult> {
+  const repository = await dependencies.openRepository(directory);
+  let selected: StoredRegressionTest | null;
+  try {
+    selected = repository.activeRegressionTestForIncident(shop, incidentId);
+  } finally {
+    repository.close();
+  }
+  return executeSelectedTests(directory, selected ? [selected] : [], dependencies);
 }
 
 export async function runBrowserRegressionTests(
@@ -128,5 +170,30 @@ export async function runBrowserRegressionTests(
       };
     },
     now: () => new Date(),
+  });
+}
+
+const defaultBrowserDependencies: BrowserRegressionDependencies = {
+  openRepository: openCatalogRepository,
+  async scan(directory, productGid, options) {
+    const result = await scanEvidenceBundle(directory, productGid, undefined, options);
+    return { evaluations: result.evaluations ?? [], evidenceRunId: result.bundle.runId };
+  },
+  now: () => new Date(),
+};
+
+export async function runBrowserRegressionTestForIncident(
+  directory: string,
+  shop: string,
+  incidentId: string,
+  dependencies: BrowserRegressionDependencies = defaultBrowserDependencies,
+): Promise<StoredTestRunResult> {
+  return runStoredRegressionTestForIncident(directory, shop, incidentId, {
+    openRepository: dependencies.openRepository,
+    async collectProduct(productGid) {
+      const result = await dependencies.scan(directory, productGid, { browser: true, cartAdd: false });
+      return { evaluations: result.evaluations, evidenceRunId: result.evidenceRunId };
+    },
+    now: dependencies.now,
   });
 }

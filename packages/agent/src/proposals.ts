@@ -173,7 +173,7 @@ export async function proposalDetails(directory: string, proposalId: string): Pr
   try {
     repository.recoverInterruptedProposals(new Date().toISOString());
     const stored = repository.getProposal(proposalId);
-    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256);
+    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256, stored.proposalArtifactBytes);
     return { stored, proposal };
   } finally { repository.close(); }
 }
@@ -194,7 +194,7 @@ export async function reconcileProposalStatus(
   try {
     repository.recoverInterruptedProposals(dependencies.now().toISOString());
     let stored = repository.getProposal(proposalId);
-    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256);
+    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256, stored.proposalArtifactBytes);
     if (stored.status === 'ambiguous') {
       const attempt = repository.proposalWriteAttempt(proposalId);
       if (!attempt) throw new Error('Ambiguous proposal has no write attempt to reconcile.');
@@ -283,7 +283,7 @@ export async function applyProposal(
     repository.recoverInterruptedProposals(dependencies.now().toISOString());
     const stored = repository.getProposal(proposalId);
     if (stored.status !== 'ready') throw new Error('Proposal is not ready to apply.');
-    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256);
+    const proposal = await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256, stored.proposalArtifactBytes);
     const expectedApproval = `${proposal.kind === 'revert' ? 'REVERT' : 'APPLY'} ${proposal.id}`;
     if (approval !== expectedApproval) throw new Error(`Approval must exactly match: ${expectedApproval}`);
     if (proposal.kind === 'revert' && proposal.validation.warningCodes.length > 0 && !acknowledgeRevertRisk) {
@@ -352,7 +352,12 @@ export async function createRevert(
     if (parentStored.status !== 'applied' || parentStored.verificationStatus !== 'verified' || !parentStored.verificationEvidenceRunId) {
       throw new Error('Only a verified applied proposal can produce a revert proposal.');
     }
-    const parent = await readProposalArtifact(directory, parentProposalId, parentStored.proposalArtifactSha256);
+    const parent = await readProposalArtifact(
+      directory,
+      parentProposalId,
+      parentStored.proposalArtifactSha256,
+      parentStored.proposalArtifactBytes,
+    );
     const evidence = repository.latestProposalEvidence(shop, parent.productId);
     if (!evidence || evidence.evidenceRunId !== parentStored.verificationEvidenceRunId) {
       throw new Error('The verified after evidence is no longer the latest product diagnostic. Create a new improvement proposal instead.');

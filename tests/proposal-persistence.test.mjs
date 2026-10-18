@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -89,7 +89,12 @@ test('persists only proposal metadata in SQLite and integrity-indexed content in
     assert.equal(stored.currentScore, 75);
     assert.equal(stored.predictedScore, 100);
     assert.deepEqual(repository.latestProposalEvidence(shop, productId)?.readiness, score());
-    assert.deepEqual((await readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256)).candidate, value.candidate);
+    assert.deepEqual((await readProposalArtifact(
+      directory,
+      proposalId,
+      stored.proposalArtifactSha256,
+      stored.proposalArtifactBytes,
+    )).candidate, value.candidate);
 
     const database = new DatabaseSync(join(directory, 'stocktrail.sqlite'), { readOnly: true });
     try {
@@ -100,6 +105,11 @@ test('persists only proposal metadata in SQLite and integrity-indexed content in
     } finally { database.close(); }
     const raw = await readFile(join(directory, 'artifacts', 'proposals', proposalId, 'proposal.json'), 'utf8');
     assert.match(raw, /Durable/);
+    await writeFile(join(directory, 'artifacts', 'proposals', proposalId, 'proposal.json'), raw.replace('Durable', 'Corrupt'));
+    await assert.rejects(
+      readProposalArtifact(directory, proposalId, stored.proposalArtifactSha256, stored.proposalArtifactBytes),
+      /integrity|hash/i,
+    );
   } finally {
     repository?.close();
     await rm(directory, { recursive: true, force: true });

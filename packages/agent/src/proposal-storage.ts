@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { proposalArtifactSchema, type ProposalArtifact } from '../../shared/src/proposals.js';
 import { hardenWindowsAcl } from './admin-scan.js';
 import { createFieldDiffs } from '../../proposals/src/index.js';
@@ -71,11 +71,21 @@ export async function writeProposalArtifacts(directory: string, proposal: Propos
   }
 }
 
-export async function readProposalArtifact(directory: string, proposalId: string, expectedSha256?: string): Promise<ProposalArtifact> {
+export async function readProposalArtifact(
+  directory: string,
+  proposalId: string,
+  expectedSha256?: string,
+  expectedBytes?: number,
+): Promise<ProposalArtifact> {
   assertUuid(proposalId);
-  const path = join(directory, 'artifacts', 'proposals', proposalId, 'proposal.json');
+  const root = resolve(directory, 'artifacts', 'proposals', proposalId);
+  const path = resolve(root, 'proposal.json');
+  const within = relative(root, path);
+  if (within.startsWith('..') || isAbsolute(within)) throw new Error('Unsafe proposal artifact.');
   const details = await lstat(path);
-  if (!details.isFile() || details.isSymbolicLink()) throw new Error('Unsafe proposal artifact.');
+  if (!details.isFile() || details.isSymbolicLink() || (expectedBytes !== undefined && details.size !== expectedBytes)) {
+    throw new Error('Unsafe proposal artifact.');
+  }
   const contents = await readFile(path, 'utf8');
   const actual = createHash('sha256').update(Buffer.from(contents, 'utf8')).digest('hex');
   if (expectedSha256 !== undefined && actual !== expectedSha256) throw new Error('Proposal artifact integrity check failed.');

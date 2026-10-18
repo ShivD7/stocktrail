@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { DashboardIncidentDetail, DashboardSourceEvidence } from '../../../../packages/shared/src/dashboard.js';
+import type { DashboardIncidentDetail } from '../../../../packages/shared/src/dashboard.js';
+import { ErrorState, LoadingState } from './ActionButton.js';
+import { apiGet } from './api.js';
 import { RerunButton } from './RerunButton.js';
 
 const explanations = {
@@ -20,17 +22,13 @@ const explanations = {
   },
 } as const;
 
-function sourceFor(detail: DashboardIncidentDetail, sources: DashboardSourceEvidence['source'][]): DashboardSourceEvidence | undefined {
-  return sources.flatMap(source => detail.sources.filter(value => value.source === source)).at(0);
-}
-
-function Perspective(props: { label: string; source?: DashboardSourceEvidence; description: string }) {
-  const observed = props.source?.outcome === 'observed';
+function Perspective(props: { label: string; perspective: DashboardIncidentDetail['comparison'][number]; description: string }) {
+  const observed = props.perspective.outcome === 'observed';
   return (
     <article className={`perspective perspective--${observed ? 'observed' : 'inconclusive'}`}>
       <div className="perspective-top"><span>{props.label}</span><strong>{observed ? 'Observed' : 'Inconclusive'}</strong></div>
       <p>{props.description}</p>
-      <small>{props.source?.reasonCode ? props.source.reasonCode.replaceAll('_', ' ') : `${props.source?.itemCount ?? 0} evidence item${props.source?.itemCount === 1 ? '' : 's'}`}</small>
+      <small>{props.perspective.reasonCode ? props.perspective.reasonCode.replaceAll('_', ' ') : `${props.perspective.itemCount} evidence item${props.perspective.itemCount === 1 ? '' : 's'}${props.perspective.source ? ` from ${props.perspective.source}` : ''}`}</small>
     </article>
   );
 }
@@ -46,31 +44,24 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/incidents/${incidentId}`, { signal: controller.signal })
-      .then(response => {
-        if (response.status === 404) { setError('not-found'); return null; }
-        if (!response.ok) throw new Error('Incident unavailable.');
-        return response.json() as Promise<DashboardIncidentDetail>;
-      })
+    setError(null);
+    void apiGet<DashboardIncidentDetail>(`/api/incidents/${incidentId}`, controller.signal)
       .then(value => { if (value) setDetail(value); })
-      .catch(value => { if (value?.name !== 'AbortError') setError('unavailable'); });
+      .catch(value => { if (value?.name !== 'AbortError') setError(value?.code === 'not_found' ? 'not-found' : 'unavailable'); });
     return () => controller.abort();
   }, [incidentId, revision]);
 
-  if (error) return (
-    <div className="detail-state" role="alert">
-      <p className="eyebrow">Incident detail</p>
-      <h1>{error === 'not-found' ? 'Incident not found' : 'Evidence unavailable'}</h1>
-      <p>{error === 'not-found' ? 'This incident may have been removed from the local store.' : 'StockTrail could not read this incident safely.'}</p>
-      <a className="secondary-action" href="#/incidents">Return to incidents</a>
-    </div>
-  );
-  if (!detail) return <div className="inline-state" role="status"><span className="loader" aria-hidden="true" /><span>Loading three-perspective evidence…</span></div>;
+  useEffect(() => {
+    if (detail) document.title = `${detail.ruleId} · Incident · StockTrail`;
+  }, [detail]);
+
+  if (error) return <ErrorState headingLevel={1} title={error === 'not-found' ? 'Incident not found' : 'Evidence unavailable'} message={error === 'not-found' ? 'This incident is not available for the configured shop.' : 'StockTrail could not read this incident safely.'} />;
+  if (!detail) return <LoadingState label="Loading three-perspective evidence…" />;
 
   const explanation = explanations[detail.ruleId];
-  const admin = sourceFor(detail, ['admin']);
-  const storefront = sourceFor(detail, ['browser', 'ajax']);
-  const search = sourceFor(detail, ['jsonld']);
+  const admin = detail.comparison.find(value => value.perspective === 'admin')!;
+  const storefront = detail.comparison.find(value => value.perspective === 'storefront')!;
+  const search = detail.comparison.find(value => value.perspective === 'search')!;
   return (
     <>
       <nav className="breadcrumbs" aria-label="Breadcrumb"><a href="#/incidents">Incidents</a><span aria-hidden="true">/</span><span>{detail.ruleId}</span></nav>
@@ -82,16 +73,16 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
         </div>
         <div className="detail-actions">
           {detail.productUrl ? <a className="secondary-action" href={detail.productUrl} target="_blank" rel="noreferrer">Open product <span aria-hidden="true">↗</span></a> : null}
-          <RerunButton label="Rerun test" onComplete={() => setRevision(value => value + 1)} />
+          <RerunButton incidentId={incidentId} label="Rerun test" onComplete={() => setRevision(value => value + 1)} />
         </div>
       </section>
 
       <section aria-labelledby="comparison-title">
         <div className="section-heading"><p className="eyebrow">The proof</p><h2 id="comparison-title">Three perspectives, one variant</h2></div>
         <div className="perspective-grid">
-          <Perspective label="Shopify truth" source={admin} description="Admin inventory, publication, tracking, and selling policy for the exact variant." />
-          <Perspective label="Storefront behavior" source={storefront} description="What a shopper encounters after StockTrail selects this exact variant in a clean browser." />
-          <Perspective label="Search data" source={search} description="The machine-readable availability claim exposed in the product page’s JSON-LD." />
+          <Perspective label="Shopify truth" perspective={admin} description="Admin inventory, publication, tracking, and selling policy for the exact variant." />
+          <Perspective label="Storefront behavior" perspective={storefront} description="What a shopper encounters after StockTrail selects this exact variant in a clean browser." />
+          <Perspective label="Search data" perspective={search} description="The machine-readable availability claim exposed in the product page’s JSON-LD." />
         </div>
       </section>
 
@@ -109,7 +100,7 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
             {detail.sources.filter(source => source.artifactPath).map(source => (
               <li key={source.source}>
                 <span><strong>{source.source}</strong><small>{source.outcome}</small></span>
-                <a href={`/api/evidence/${detail.latestEvidenceRunId}/${source.artifactPath}`} target="_blank" rel="noreferrer">View evidence</a>
+                <a href={`/api/incidents/${detail.id}/evidence/${source.source}`} target="_blank" rel="noreferrer">View evidence</a>
               </li>
             ))}
           </ul>
