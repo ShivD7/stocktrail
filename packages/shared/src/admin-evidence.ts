@@ -42,6 +42,7 @@ export const adminEvidenceReportSchema = z.object({
     response: z.literal('2026-10').nullable(),
   }),
   pageCount: z.number().int().positive(),
+  requestCount: z.number().int().positive().optional(),
   complete: z.literal(true),
   limitations: z.array(z.string().min(1)).min(1),
   product: z.object({

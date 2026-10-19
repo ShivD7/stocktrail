@@ -83,6 +83,10 @@ const adminEvidenceQuery = `#graphql
 
 export class ShopifyProductUnavailableError extends Error {}
 
+export type AdminEvidenceOptions = {
+  signal?: AbortSignal;
+};
+
 function malformedEvidenceResponse(): ShopifyResponseError {
   return new ShopifyResponseError('Shopify returned a malformed Admin evidence response.');
 }
@@ -102,6 +106,7 @@ export async function readAdminProductEvidence(
   client: ShopifyAdminClient,
   productId: string,
   now: () => Date = () => new Date(),
+  options: AdminEvidenceOptions = {},
 ): Promise<AdminEvidenceReport> {
   assertShopifyProductGid(productId);
   const startedAt = now().toISOString();
@@ -112,6 +117,7 @@ export async function readAdminProductEvidence(
   let firstProduct: ProductPage | undefined;
   let after: string | null = null;
   let pageCount = 0;
+  let requestCount = 0;
 
   while (true) {
     if (pageCount >= MAX_PAGE_REQUESTS) throw malformedEvidenceResponse();
@@ -119,8 +125,9 @@ export async function readAdminProductEvidence(
       productId,
       first: VARIANT_PAGE_SIZE,
       after,
-    });
+    }, { signal: options.signal });
     pageCount += 1;
+    requestCount += response.metadata.requestCount;
     if (response.metadata.apiVersion !== null) responseVersions.add(response.metadata.apiVersion);
     const parsed = pageSchema.safeParse(response.data);
     if (!parsed.success) throw malformedEvidenceResponse();
@@ -163,6 +170,7 @@ export async function readAdminProductEvidence(
       response: responseVersions.size === 1 ? SHOPIFY_API_VERSION : null,
     },
     pageCount,
+    requestCount,
     complete: true,
     limitations: [
       'Admin API evidence only; no storefront, Ajax, HTML, or JSON-LD was observed.',

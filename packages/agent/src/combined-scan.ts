@@ -41,14 +41,29 @@ import { persistDiagnosticResults } from './diagnostic-results.js';
 import type { RuleEvaluation } from '../../shared/src/diagnostics.js';
 import type { ReadinessScore } from '../../shared/src/readiness.js';
 
-export type CombinedScanResult = { bundle: ProductEvidenceBundle; evaluations?: RuleEvaluation[]; readinessTotal?: number | null };
-export type CombinedScanOptions = { browser?: boolean; cartAdd?: boolean };
+export type CombinedScanResult = {
+  bundle: ProductEvidenceBundle;
+  adminRequestCount: number;
+  evaluations?: RuleEvaluation[];
+  readinessTotal?: number | null;
+};
+export type CombinedScanOptions = {
+  browser?: boolean;
+  cartAdd?: boolean;
+  signal?: AbortSignal;
+  onAdminRequest?: () => void;
+};
 
 export type CombinedScanDependencies = {
   readConfig(directory: string): Promise<Config>;
   validateTarget(directory: string, shop: string, productId: string): Promise<void>;
   readToken(shop: string): Promise<string>;
-  readAdmin(shop: string, token: string, productId: string): Promise<AdminEvidenceReport>;
+  readAdmin(
+    shop: string,
+    token: string,
+    productId: string,
+    context?: { signal?: AbortSignal; onRequest?: () => void },
+  ): Promise<AdminEvidenceReport>;
   fetchAjax(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
   fetchHtml(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
   collectBrowser(admin: AdminEvidenceReport, ajax: AjaxNormalizedProduct, cartAuthorized: boolean): Promise<BrowserEvidence>;
@@ -112,8 +127,11 @@ const defaultDependencies: CombinedScanDependencies = {
   readConfig,
   validateTarget: validateAdminScanTarget,
   readToken: readStoredToken,
-  async readAdmin(shop, token, productId) {
-    return readAdminProductEvidence(new ShopifyAdminClient(shop, token), productId);
+  async readAdmin(shop, token, productId, context) {
+    const client = new ShopifyAdminClient(shop, token, globalThis.fetch, {
+      onRequest: context?.onRequest,
+    });
+    return readAdminProductEvidence(client, productId, undefined, { signal: context?.signal });
   },
   fetchAjax: fetchAjaxProduct,
   fetchHtml: fetchHtmlProduct,
@@ -221,7 +239,10 @@ export async function scanEvidenceBundle(
   await dependencies.validateTarget(directory, config.shop, productId);
   const token = await dependencies.readToken(config.shop);
   const startedAt = dependencies.now().toISOString();
-  const admin = await dependencies.readAdmin(config.shop, token, productId);
+  const admin = await dependencies.readAdmin(config.shop, token, productId, {
+    signal: options.signal,
+    onRequest: options.onAdminRequest,
+  });
   const runId = dependencies.uuid();
   const inputs: BundleArtifactInput[] = [{
     source: 'admin', relativePath: 'admin.json', mediaType: 'application/json',
@@ -366,7 +387,8 @@ export async function scanEvidenceBundle(
     ],
   });
   const saved = await dependencies.saveBundle(directory, config.shop, productId, runId, inputs, bundle);
-  if (!options.browser) return { bundle: saved };
+  const adminRequestCount = admin.requestCount ?? admin.pageCount;
+  if (!options.browser) return { bundle: saved, adminRequestCount };
   const evaluations: RuleEvaluation[] = [];
   const matches = [];
   for (const variant of admin.product.variants) {
@@ -396,5 +418,5 @@ export async function scanEvidenceBundle(
   await dependencies.persistDiagnostics(directory, config.shop, productId, {
     evidenceRunId: runId, evaluatedAt: completedAt, evaluations, readiness,
   });
-  return { bundle: saved, evaluations, readinessTotal: readiness.total };
+  return { bundle: saved, adminRequestCount, evaluations, readinessTotal: readiness.total };
 }

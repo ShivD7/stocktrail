@@ -10,7 +10,7 @@ function adminReport(onlineStoreUrl = 'https://store.example/en-ca/products/synt
   return {
     schemaVersion: 1, mode: 'admin_only', source: 'shopify_admin_graphql', productId,
     observationWindow: { startedAt: '2026-10-15T11:59:58.000Z', completedAt: '2026-10-15T11:59:59.000Z' },
-    apiVersion: { requested: '2026-10', response: '2026-10' }, pageCount: 1, complete: true,
+    apiVersion: { requested: '2026-10', response: '2026-10' }, pageCount: 1, requestCount: 3, complete: true,
     limitations: ['Synthetic Admin context.'],
     product: {
       id: productId, title: 'Private clean trail shoe', handle: 'synthetic-item',
@@ -93,6 +93,7 @@ test('collects one observed four-source bundle with safe aggregate output', asyn
   const result = await scanEvidenceBundle('unused', productId, fixture.value);
   assert.deepEqual(fixture.calls, ['config', 'validate', 'token', 'admin', 'ajax', 'html', 'save']);
   assert.equal(result.bundle.collectionStatus, 'complete');
+  assert.equal(result.adminRequestCount, 3);
   assert.deepEqual(Object.values(result.bundle.sources).map(source => source.outcome),
     ['observed', 'observed', 'observed', 'observed']);
   assert.deepEqual(result.bundle.artifacts.map(artifact => artifact.relativePath),

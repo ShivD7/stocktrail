@@ -84,6 +84,7 @@ test('reads complete Admin evidence with the bounded content fields required for
   });
   assert.deepEqual(report.apiVersion, { requested: '2026-10', response: '2026-10' });
   assert.equal(report.pageCount, 1);
+  assert.equal(report.requestCount, 1);
   assert.equal(report.complete, true);
   assert.equal(report.product.title, 'Private synthetic product title');
   assert.equal(report.product.descriptionHtml, '<p>Private synthetic product description.</p>');
@@ -106,6 +107,7 @@ test('paginates variants at 100 and preserves consistent product evidence', asyn
   const report = await readAdminProductEvidence(client, productId);
   assert.deepEqual(afterValues, [null, 'cursor-a']);
   assert.equal(report.pageCount, 2);
+  assert.equal(report.requestCount, 2);
   assert.deepEqual(report.product.variants.map(item => item.id), [
     'gid://shopify/ProductVariant/1',
     'gid://shopify/ProductVariant/2',

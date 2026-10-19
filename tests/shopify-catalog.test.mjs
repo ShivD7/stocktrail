@@ -116,6 +116,7 @@ test('paginates products synchronously and separately completes each product var
   assert.equal(result.requestMetadata[0].requestId, 'synthetic-request');
   assert.equal(result.requestMetadata[0].apiVersion, '2026-10');
   assert.deepEqual(result.requestMetadata[0].cost, { requestedQueryCost: 3 });
+  assert.equal(result.requestMetadata[0].requestCount, 1);
   assert.deepEqual(result.provenance, {
     observedAt: '2026-10-15T12:34:56.789Z',
     evidenceSource: 'shopify_admin_graphql',
@@ -317,6 +318,7 @@ test('retries read-only HTTP 429 and 5xx responses with deterministic capped del
 
   const result = await client.query('query Synthetic { shop { name } }');
   assert.equal(result.data.shop.name, 'Synthetic');
+  assert.equal(result.metadata.requestCount, 3);
   assert.deepEqual(delays, [500, 200]);
   assert.equal(responses.length, 0);
 });

@@ -31,6 +31,8 @@ import { launchDashboard, waitForDashboardShutdown } from '../../dashboard/launc
 import { safeErrorMessage } from '../../../packages/shared/src/redaction.js';
 import { diagnoseSetup } from '../../../packages/agent/src/doctor.js';
 import { deleteLocalData } from '../../../packages/agent/src/data-deletion.js';
+import { measureTenProductScanPerformance } from '../../../packages/agent/src/performance.js';
+import { formatScanPerformance } from './performance-output.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -42,6 +44,7 @@ Usage: stocktrail <command> [options]
   logout                                Delete the stored Shopify token
   delete-data --confirm <shop>          Delete local data and the stored token
   doctor [--live]                       Check local setup and optional Shopify connection
+  performance --live                    Measure sequential scans of 10 monitored products
   scan --demo                           Run synthetic diagnostics and save evidence
   test                                  Report stored assertions without live browser evidence
   test --browser [--cart-add]           Rerun stored assertions with fresh browser evidence
@@ -152,7 +155,9 @@ async function main() {
     throw new Error('--acknowledge-revert-risk is only supported with apply.');
   }
   if (values.reconcile !== undefined && command !== 'proposal') throw new Error('--reconcile is only supported with proposal status.');
-  if (values.live !== undefined && command !== 'doctor') throw new Error('--live is only supported with doctor.');
+  if (values.live !== undefined && command !== 'doctor' && command !== 'performance') {
+    throw new Error('--live is only supported with doctor or performance.');
+  }
   if (values.confirm !== undefined && command !== 'delete-data') throw new Error('--confirm is only supported with delete-data.');
   if (values.port !== undefined && command !== 'dashboard') throw new Error('--port is only supported with dashboard.');
   if (values['no-open'] !== undefined && command !== 'dashboard') throw new Error('--no-open is only supported with dashboard.');
@@ -198,6 +203,13 @@ async function main() {
     case 'doctor': {
       for (const check of await diagnoseSetup(directory, values.live === true)) {
         console.log(`${check.status.toUpperCase()} ${check.label}: ${check.detail}`);
+      }
+      return;
+    }
+    case 'performance': {
+      if (values.live !== true) throw new Error('Performance measurement requires --live.');
+      for (const line of formatScanPerformance(await measureTenProductScanPerformance(directory))) {
+        console.log(line);
       }
       return;
     }

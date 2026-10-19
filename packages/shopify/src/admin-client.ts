@@ -13,6 +13,7 @@ export type ShopifyRequestMetadata = {
   requestId: string | null;
   apiVersion: string | null;
   cost: unknown;
+  requestCount: number;
 };
 
 export class ShopifyAuthError extends Error {}
@@ -35,6 +36,7 @@ export type ShopifyAdminClientOptions = {
   retryPolicy?: Partial<RetryPolicy>;
   now?: () => number;
   sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>;
+  onRequest?: () => void;
 };
 
 export type ShopifyQueryOptions = {
@@ -52,6 +54,7 @@ export class ShopifyAdminClient {
   readonly #retryPolicy: RetryPolicy;
   readonly #now: () => number;
   readonly #sleep: (delayMs: number, signal: AbortSignal) => Promise<void>;
+  readonly #onRequest: () => void;
 
   constructor(
     shopInput: string,
@@ -65,6 +68,7 @@ export class ShopifyAdminClient {
     this.#retryPolicy = resolveRetryPolicy(options.retryPolicy);
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? sleepWithSignal;
+    this.#onRequest = options.onRequest ?? (() => undefined);
     if (!this.#token) throw new ShopifyAuthError('The Shopify Admin API token cannot be empty.');
   }
 
@@ -92,6 +96,7 @@ export class ShopifyAdminClient {
 
       let response: Response;
       try {
+        this.#onRequest();
         response = await this.#fetcher(
           `https://${this.shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
           {
@@ -123,6 +128,7 @@ export class ShopifyAdminClient {
         requestId: response.headers.get('x-request-id'),
         apiVersion,
         cost: null,
+        requestCount: attempt,
       };
 
       if (apiVersion !== null && apiVersion !== SHOPIFY_API_VERSION) {

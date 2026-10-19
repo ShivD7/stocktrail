@@ -17,6 +17,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);
     assert.match(run('--help').stdout, /dashboard/);
+    assert.match(run('--help').stdout, /performance --live/);
     assert.equal(run('doctor').status, 1);
     assert.match(run('scan').stderr, /--product-id is required for a combined scan/);
     assert.match(run('scan', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
@@ -54,6 +55,8 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('doctor', '--preview').stderr, /only supported with import/);
     assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
     assert.match(run('scan', '--live').stderr, /only supported with doctor/);
+    assert.match(run('performance').stderr, /requires --live/);
+    assert.match(run('performance', '--live').stderr, /No local configuration/);
     assert.match(
       run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
       /only supported with monitor, scan, or improve/,
