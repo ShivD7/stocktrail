@@ -18,6 +18,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('--help').stdout, /connect/);
     assert.match(run('--help').stdout, /dashboard/);
     assert.match(run('--help').stdout, /performance --live/);
+    assert.match(run('--help').stdout, /schedule run-once/);
     assert.equal(run('doctor').status, 1);
     assert.match(run('scan').stderr, /--product-id is required for a combined scan/);
     assert.match(run('scan', '--product-id', 'not-a-gid').stderr, /Shopify Product GID/);
@@ -57,6 +58,9 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('scan', '--live').stderr, /only supported with doctor/);
     assert.match(run('performance').stderr, /requires --live/);
     assert.match(run('performance', '--live').stderr, /No local configuration/);
+    assert.match(run('schedule').stderr, /Use schedule set/);
+    assert.match(run('schedule', 'set').stderr, /requires --interval-minutes/);
+    assert.match(run('doctor', '--interval-minutes', '30').stderr, /only supported with schedule set/);
     assert.match(
       run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
       /only supported with monitor, scan, or improve/,
@@ -89,6 +93,54 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('scan', '--demo', '--shop', 'example.myshopify.com').status, 1);
     assert.equal(run('deploy').status, 1);
     assert.equal(run('--unknown').status, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('schedule CLI persists state and a not-due check exits without a resident timer', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'stocktrail-schedule-cli-'));
+  const data = join(directory, 'local-data');
+  const run = (...args) => spawnSync(process.execPath, [entry, ...args], {
+    cwd: directory,
+    encoding: 'utf8',
+    timeout: 5_000,
+    env: { ...process.env, STOCKTRAIL_HOME: data },
+  });
+  const syntheticProduct = {
+    id: 'gid://shopify/Product/801',
+    title: 'Private synthetic schedule title',
+    descriptionHtml: '<p>Private synthetic schedule description</p>',
+    seo: { title: null, description: null },
+    handle: 'private-synthetic-schedule-handle',
+    status: 'ACTIVE',
+    updatedAt: '2026-10-18T12:00:00.000Z',
+    onlineStoreUrl: null,
+    publishedToOnlineStore: false,
+    variants: [],
+  };
+  try {
+    assert.equal(run('init', '--shop', 'example.myshopify.com').status, 0);
+    const repository = await openCatalogRepository(data);
+    repository.importCatalog('example.myshopify.com', [syntheticProduct], true, {
+      observedAt: '2026-10-18T12:00:00.000Z',
+      evidenceSource: 'shopify_admin_graphql',
+      apiVersion: '2026-10',
+    });
+    repository.addMonitoredProduct('example.myshopify.com', syntheticProduct.id);
+    repository.close();
+
+    const configured = run('schedule', 'set', '--interval-minutes', '30');
+    assert.equal(configured.status, 0);
+    assert.match(configured.stdout, /every 30 minutes/);
+    const status = run('schedule', 'status');
+    assert.equal(status.status, 0);
+    assert.match(status.stdout, /Run state: idle/);
+    const due = run('schedule', 'run');
+    assert.equal(due.status, 0);
+    assert.match(due.stdout, /not due/);
+    const output = `${configured.stdout}\n${status.stdout}\n${due.stdout}`;
+    assert.doesNotMatch(output, /Private synthetic|private-synthetic|gid:\/\/shopify/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

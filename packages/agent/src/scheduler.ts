@@ -4,6 +4,7 @@ import { scanEvidenceBundle, type CombinedScanOptions } from './combined-scan.js
 import {
   openCatalogRepository,
   type CatalogRepository,
+  type ScanSchedule,
 } from '../../database/src/catalog-repository.js';
 
 export type ScheduledScanStatus = 'completed' | 'not_due' | 'already_running' | 'cancelled';
@@ -17,7 +18,7 @@ export type ScheduledScanSummary = {
 };
 
 type SchedulerRepository = Pick<CatalogRepository,
-  'scanSchedule' | 'claimScanSchedule' | 'activeMonitoredProductGids' |
+  'scanSchedule' | 'configureScanSchedule' | 'claimScanSchedule' | 'activeMonitoredProductGids' |
   'completeScanSchedule' | 'abandonScanSchedule' | 'close'>;
 
 export type ScheduledScanDependencies = {
@@ -44,6 +45,39 @@ function emptySummary(status: ScheduledScanStatus): ScheduledScanSummary {
     succeededProductCount: 0,
     failedProductCount: 0,
   };
+}
+
+export async function configureScheduledScans(
+  directory: string,
+  intervalMinutes: number,
+  dependencies: ScheduledScanDependencies = defaultDependencies,
+): Promise<ScanSchedule> {
+  const config = await dependencies.readConfig(directory);
+  if (!config.shop) throw new Error('No shop is configured. Run stocktrail init first.');
+  if (!Number.isSafeInteger(intervalMinutes) || intervalMinutes < 1 || intervalMinutes > 10_080) {
+    throw new Error('Schedule interval must be a whole number from 1 to 10080 minutes.');
+  }
+  const nextDueAt = new Date(dependencies.now().getTime() + intervalMinutes * 60_000).toISOString();
+  const repository = await dependencies.openRepository(directory);
+  try {
+    return repository.configureScanSchedule(config.shop, intervalMinutes, nextDueAt);
+  } finally {
+    repository.close();
+  }
+}
+
+export async function scheduledScanStatus(
+  directory: string,
+  dependencies: ScheduledScanDependencies = defaultDependencies,
+): Promise<ScanSchedule | null> {
+  const config = await dependencies.readConfig(directory);
+  if (!config.shop) throw new Error('No shop is configured. Run stocktrail init first.');
+  const repository = await dependencies.openRepository(directory);
+  try {
+    return repository.scanSchedule(config.shop);
+  } finally {
+    repository.close();
+  }
 }
 
 export async function runScheduledScans(

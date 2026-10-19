@@ -33,6 +33,11 @@ import { diagnoseSetup } from '../../../packages/agent/src/doctor.js';
 import { deleteLocalData } from '../../../packages/agent/src/data-deletion.js';
 import { measureTenProductScanPerformance } from '../../../packages/agent/src/performance.js';
 import { formatScanPerformance } from './performance-output.js';
+import {
+  configureScheduledScans,
+  runScheduledScans,
+  scheduledScanStatus,
+} from '../../../packages/agent/src/scheduler.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -45,6 +50,10 @@ Usage: stocktrail <command> [options]
   delete-data --confirm <shop>          Delete local data and the stored token
   doctor [--live]                       Check local setup and optional Shopify connection
   performance --live                    Measure sequential scans of 10 monitored products
+  schedule set --interval-minutes <n>   Persist a 1-10080 minute monitored-product schedule
+  schedule status                       Show aggregate schedule state
+  schedule run                          Run one pass when due, then exit
+  schedule run-once                     Run one pass now, then exit
   scan --demo                           Run synthetic diagnostics and save evidence
   test                                  Report stored assertions without live browser evidence
   test --browser [--cart-add]           Rerun stored assertions with fresh browser evidence
@@ -126,6 +135,7 @@ async function main() {
       reconcile: { type: 'boolean' },
       live: { type: 'boolean' },
       confirm: { type: 'string' },
+      'interval-minutes': { type: 'string' },
       port: { type: 'string' }, 'no-open': { type: 'boolean' },
       'product-id': { type: 'string' },
     },
@@ -133,7 +143,7 @@ async function main() {
   if (values.help) { console.log(help); return; }
   if (values.version) { console.log('0.0.0'); return; }
   const [command, ...extra] = positionals;
-  if (extra.length && !['monitor', 'proposal', 'apply', 'revert'].includes(command ?? '')) throw new Error('Unexpected arguments. Use --help for usage.');
+  if (extra.length && !['monitor', 'proposal', 'apply', 'revert', 'schedule'].includes(command ?? '')) throw new Error('Unexpected arguments. Use --help for usage.');
   if (values.shop !== undefined && command !== 'init') throw new Error('--shop is only supported with init.');
   if (values.demo !== undefined && command !== 'scan') throw new Error('--demo is only supported with scan.');
   if (values.admin !== undefined && command !== 'scan') throw new Error('--admin is only supported with scan.');
@@ -159,6 +169,9 @@ async function main() {
     throw new Error('--live is only supported with doctor or performance.');
   }
   if (values.confirm !== undefined && command !== 'delete-data') throw new Error('--confirm is only supported with delete-data.');
+  if (values['interval-minutes'] !== undefined && command !== 'schedule') {
+    throw new Error('--interval-minutes is only supported with schedule set.');
+  }
   if (values.port !== undefined && command !== 'dashboard') throw new Error('--port is only supported with dashboard.');
   if (values['no-open'] !== undefined && command !== 'dashboard') throw new Error('--no-open is only supported with dashboard.');
   const directory = dataDirectory();
@@ -210,6 +223,60 @@ async function main() {
       if (values.live !== true) throw new Error('Performance measurement requires --live.');
       for (const line of formatScanPerformance(await measureTenProductScanPerformance(directory))) {
         console.log(line);
+      }
+      return;
+    }
+    case 'schedule': {
+      const [action] = extra;
+      if (!action || extra.length !== 1 || !['set', 'status', 'run', 'run-once'].includes(action)) {
+        throw new Error('Use schedule set, schedule status, schedule run, or schedule run-once.');
+      }
+      if (action === 'set') {
+        if (values['interval-minutes'] === undefined || !/^\d+$/.test(values['interval-minutes'])) {
+          throw new Error('schedule set requires --interval-minutes as a whole number from 1 to 10080.');
+        }
+        const configured = await configureScheduledScans(directory, Number(values['interval-minutes']));
+        console.log(`Scheduled monitored scans every ${configured.intervalMinutes} minutes.`);
+        console.log(`Next due: ${configured.nextDueAt}`);
+        return;
+      }
+      if (values['interval-minutes'] !== undefined) {
+        throw new Error('--interval-minutes is only supported with schedule set.');
+      }
+      if (action === 'status') {
+        const schedule = await scheduledScanStatus(directory);
+        if (!schedule) {
+          console.log('No monitored-product scan schedule is configured.');
+          return;
+        }
+        console.log(`Schedule interval: ${schedule.intervalMinutes} minutes.`);
+        console.log(`Next due: ${schedule.nextDueAt}`);
+        console.log(schedule.activeRunId === null ? 'Run state: idle.' : 'Run state: active.');
+        return;
+      }
+
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      process.once('SIGINT', cancel);
+      try {
+        const result = await runScheduledScans(directory, {
+          force: action === 'run-once',
+          signal: controller.signal,
+        });
+        if (result.status === 'not_due') {
+          console.log('Scheduled scan is not due. No products were scanned.');
+          return;
+        }
+        if (result.status === 'already_running') {
+          console.log('A scheduled scan is already running. No overlapping run was started.');
+          return;
+        }
+        console.log(`${result.status === 'cancelled' ? 'Scheduled scan cancelled' : 'Scheduled scan complete'}.`);
+        console.log(`Selected: ${result.selectedProductCount}; attempted: ${result.attemptedProductCount}; succeeded: ${result.succeededProductCount}; failed: ${result.failedProductCount}.`);
+        if (result.status === 'cancelled') process.exitCode = 130;
+        else if (result.failedProductCount > 0) process.exitCode = 1;
+      } finally {
+        process.removeListener('SIGINT', cancel);
       }
       return;
     }
