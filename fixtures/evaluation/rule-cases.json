@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic normalized evidence for deterministic StockTrail rule evaluation. No store data was used.",
+  "evidenceRunId": "60000000-0000-4000-8000-000000000001",
+  "evaluatedAt": "2026-11-13T12:00:00.000Z",
+  "cases": [
+    {
+      "id": "st001-unavailable-in-stock",
+      "ruleId": "ST-001",
+      "groundTruth": "positive",
+      "expectedResult": "fail",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "InStock", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-unavailable-out-of-stock",
+      "ruleId": "ST-001",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "OutOfStock", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-draft-sold-out",
+      "ruleId": "ST-001",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "unavailable", "reasonCode": "product_not_active" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "SoldOut", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-unpublished-discontinued",
+      "ruleId": "ST-001",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "unavailable", "reasonCode": "not_published" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "Discontinued", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-unsupported-preorder",
+      "ruleId": "ST-001",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "PreOrder", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-product-level-claim",
+      "ruleId": "ST-001",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Product", "availabilityCanonical": "InStock", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st001-ambiguous-variant",
+      "ruleId": "ST-001",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "ambiguous", "claimKind": "Offer", "availabilityCanonical": "InStock", "coherentClaimCount": 2 }
+    },
+    {
+      "id": "st001-admin-missing",
+      "ruleId": "ST-001",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "inconclusive", "reasonCode": "admin_evidence_unavailable" },
+      "jsonLd": { "sourceOutcome": "observed", "match": "exact", "claimKind": "Offer", "availabilityCanonical": "InStock", "coherentClaimCount": 1 }
+    },
+    {
+      "id": "st002-unavailable-control-enabled",
+      "ruleId": "ST-002",
+      "groundTruth": "positive",
+      "expectedResult": "fail",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st002-unavailable-control-disabled",
+      "ruleId": "ST-002",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st002-draft-control-enabled",
+      "ruleId": "ST-002",
+      "groundTruth": "positive",
+      "expectedResult": "fail",
+      "availability": { "state": "unavailable", "reasonCode": "product_not_active" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st002-unpublished-control-disabled",
+      "ruleId": "ST-002",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "unavailable", "reasonCode": "not_published" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st002-browser-timeout",
+      "ruleId": "ST-002",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "browser": { "sourceOutcome": "inconclusive", "match": "exact", "controlState": "missing", "storefrontPurchasable": null }
+    },
+    {
+      "id": "st002-wrong-selected-variant",
+      "ruleId": "ST-002",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "browser": { "sourceOutcome": "observed", "match": "mismatch", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st002-admin-missing",
+      "ruleId": "ST-002",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "inconclusive", "reasonCode": "admin_evidence_unavailable" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st002-continue-selling",
+      "ruleId": "ST-002",
+      "groundTruth": "not_applicable",
+      "expectedResult": "not_applicable",
+      "availability": { "state": "purchasable", "reasonCode": "continue_selling" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st003-sellable-control-disabled",
+      "ruleId": "ST-003",
+      "groundTruth": "positive",
+      "expectedResult": "fail",
+      "availability": { "state": "purchasable", "reasonCode": "sellable_quantity_positive" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st003-sellable-control-enabled",
+      "ruleId": "ST-003",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "purchasable", "reasonCode": "sellable_quantity_positive" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st003-continue-selling-disabled",
+      "ruleId": "ST-003",
+      "groundTruth": "positive",
+      "expectedResult": "fail",
+      "availability": { "state": "purchasable", "reasonCode": "continue_selling" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st003-untracked-enabled",
+      "ruleId": "ST-003",
+      "groundTruth": "negative",
+      "expectedResult": "pass",
+      "availability": { "state": "purchasable", "reasonCode": "inventory_untracked" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "enabled", "storefrontPurchasable": true }
+    },
+    {
+      "id": "st003-browser-challenge",
+      "ruleId": "ST-003",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "purchasable", "reasonCode": "sellable_quantity_positive" },
+      "browser": { "sourceOutcome": "inconclusive", "match": "exact", "controlState": "missing", "storefrontPurchasable": null }
+    },
+    {
+      "id": "st003-wrong-selected-variant",
+      "ruleId": "ST-003",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "purchasable", "reasonCode": "sellable_quantity_positive" },
+      "browser": { "sourceOutcome": "observed", "match": "mismatch", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st003-admin-missing",
+      "ruleId": "ST-003",
+      "groundTruth": "inconclusive",
+      "expectedResult": "inconclusive",
+      "availability": { "state": "inconclusive", "reasonCode": "admin_evidence_unavailable" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    },
+    {
+      "id": "st003-unavailable",
+      "ruleId": "ST-003",
+      "groundTruth": "not_applicable",
+      "expectedResult": "not_applicable",
+      "availability": { "state": "unavailable", "reasonCode": "sellable_quantity_nonpositive" },
+      "browser": { "sourceOutcome": "observed", "match": "exact", "controlState": "disabled", "storefrontPurchasable": false }
+    }
+  ]
+}
