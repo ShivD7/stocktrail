@@ -299,7 +299,6 @@ function defaultRequest(
       return;
     }
     timeout = setTimeout(onAbort, Math.max(1, Math.ceil(context.timeoutMs)));
-    timeout.unref();
     request.on('error', () => finish({
       ok: false,
       reasonCode: context.signal.aborted ? 'timeout' : 'transport_failure',
@@ -376,7 +375,6 @@ async function fetchPublicProduct(
   const deadlineAt = startedAt + timeoutMs;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(0, timeoutMs));
-  timeout.unref();
   const expired = () => controller.signal.aborted || now() >= deadlineAt;
   try {
     let addresses: ResolvedAddress[];
