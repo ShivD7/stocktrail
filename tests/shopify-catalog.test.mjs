@@ -5,6 +5,8 @@ import {
   ShopifyAuthError,
   ShopifyGraphqlError,
   ShopifyHttpError,
+  ShopifyRequestCancelledError,
+  ShopifyRequestTimeoutError,
   ShopifyResponseError,
   ShopifyVersionMismatchError,
 } from '../dist/packages/shopify/src/admin-client.js';
@@ -359,4 +361,90 @@ test('never retries a mutation passed to the read client', async () => {
     ShopifyHttpError,
   );
   assert.equal(requests, 1);
+});
+
+test('caller cancellation stops reads before fetch and during retry backoff', async () => {
+  const alreadyCancelled = new AbortController();
+  alreadyCancelled.abort();
+  let requests = 0;
+  const client = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    return response({ shop: { name: 'Synthetic' } });
+  });
+  await assert.rejects(
+    () => client.query('query Synthetic { shop { name } }', {}, { signal: alreadyCancelled.signal }),
+    ShopifyRequestCancelledError,
+  );
+  assert.equal(requests, 0);
+
+  const controller = new AbortController();
+  let retryStarted;
+  const waiting = new Promise(resolve => { retryStarted = resolve; });
+  const retrying = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    return new Response(null, { status: 503 });
+  }, {
+    retryPolicy: { baseDelayMs: 100, totalDeadlineMs: 1_000 },
+    sleep: async (_delayMs, signal) => new Promise((resolve, reject) => {
+      retryStarted();
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  });
+  const result = retrying.query('query Synthetic { shop { name } }', {}, { signal: controller.signal });
+  await waiting;
+  controller.abort();
+  await assert.rejects(() => result, ShopifyRequestCancelledError);
+  assert.equal(requests, 1);
+});
+
+test('caller cancellation during fetch is not retried or reported as a timeout', async () => {
+  const controller = new AbortController();
+  let requests = 0;
+  let fetchStarted;
+  const started = new Promise(resolve => { fetchStarted = resolve; });
+  const client = new ShopifyAdminClient(shop, credential, async (_url, options) => {
+    requests += 1;
+    fetchStarted();
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    });
+  });
+
+  const result = client.query('query Synthetic { shop { name } }', {}, { signal: controller.signal });
+  await started;
+  controller.abort();
+  await assert.rejects(() => result, ShopifyRequestCancelledError);
+  assert.equal(requests, 1);
+});
+
+test('total retry deadline and fetch timeouts have a distinct safe timeout error', async () => {
+  let requests = 0;
+  const deadline = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    return new Response(null, { status: 429, headers: { 'retry-after': '5' } });
+  }, {
+    retryPolicy: {
+      maxAttempts: 3,
+      baseDelayMs: 100,
+      maxDelayMs: 100,
+      maxRetryAfterMs: 500,
+      totalDeadlineMs: 100,
+    },
+    sleep: async () => { throw new Error('must not sleep beyond deadline'); },
+  });
+  await assert.rejects(
+    () => deadline.query('query Synthetic { shop { name } }'),
+    error => error instanceof ShopifyRequestTimeoutError && !/credential|retry-after/i.test(error.message),
+  );
+  assert.equal(requests, 1);
+
+  const timedOut = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    throw new DOMException('private timeout detail', 'TimeoutError');
+  });
+  await assert.rejects(
+    () => timedOut.query('query Synthetic { shop { name } }'),
+    error => error instanceof ShopifyRequestTimeoutError && !/private timeout detail|credential/i.test(error.message),
+  );
+  assert.equal(requests, 2);
 });
