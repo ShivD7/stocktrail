@@ -13,6 +13,8 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
   const run = (...args) => spawnSync(process.execPath, [entry, ...args], {
     cwd: directory, encoding: 'utf8', env: { ...process.env, STOCKTRAIL_HOME: data },
   });
+  const manifest = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
+  assert.equal(run('--version').stdout.trim(), manifest.version);
   try {
     assert.equal(run('--help').status, 0);
     assert.match(run('--help').stdout, /connect/);

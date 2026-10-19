@@ -1,8 +1,23 @@
 {
   "name": "stocktrail",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Local Shopify inventory diagnostics CLI",
+  "author": "ShivD7",
+  "keywords": [
+    "shopify",
+    "inventory",
+    "diagnostics",
+    "accessibility"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShivD7/stocktrail.git"
+  },
+  "homepage": "https://github.com/ShivD7/stocktrail#readme",
+  "bugs": {
+    "url": "https://github.com/ShivD7/stocktrail/issues"
+  },
   "type": "module",
   "bin": {
     "stocktrail": "dist/apps/cli/src/index.js"
@@ -23,6 +38,7 @@
     "start": "node dist/apps/cli/src/index.js",
     "test": "npm run build --silent && node --test tests/*.test.mjs",
     "test:pack": "node scripts/pack-smoke.mjs",
+    "release:check": "node scripts/release-readiness.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
 import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
@@ -38,6 +39,8 @@ import {
   runScheduledScans,
   scheduledScanStatus,
 } from '../../../packages/agent/src/scheduler.js';
+
+const packageVersion = (createRequire(import.meta.url)('../../../../package.json') as { version: string }).version;
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -141,7 +144,7 @@ async function main() {
     },
   });
   if (values.help) { console.log(help); return; }
-  if (values.version) { console.log('0.0.0'); return; }
+  if (values.version) { console.log(packageVersion); return; }
   const [command, ...extra] = positionals;
   if (extra.length && !['monitor', 'proposal', 'apply', 'revert', 'schedule'].includes(command ?? '')) throw new Error('Unexpected arguments. Use --help for usage.');
   if (values.shop !== undefined && command !== 'init') throw new Error('--shop is only supported with init.');
