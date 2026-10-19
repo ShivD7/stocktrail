@@ -27,8 +27,8 @@ a { color: inherit; }
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 2.25rem; padding: 1.75rem 1.25rem; color: #eff9f2; background: var(--forest); }
 .brand { display: inline-flex; align-items: center; gap: 0.75rem; width: fit-content; text-decoration: none; font-size: 1.05rem; font-weight: 780; letter-spacing: -0.02em; }
 .brand-mark { display: grid; place-items: center; width: 2rem; aspect-ratio: 1; border-radius: 0.6rem 0.6rem 0.6rem 0.15rem; color: var(--forest); background: var(--mint); font-family: Georgia, serif; font-size: 1.25rem; }
-.sidebar nav { display: grid; gap: 0.35rem; }
-.sidebar nav a { padding: 0.75rem 0.85rem; border-radius: 0.65rem; color: #bed1c5; text-decoration: none; font-size: 0.93rem; font-weight: 650; }
+.sidebar nav { display: grid; min-width: 0; gap: 0.35rem; }
+.sidebar nav a { min-width: 0; padding: 0.75rem 0.85rem; border-radius: 0.65rem; color: #bed1c5; text-decoration: none; font-size: 0.93rem; font-weight: 650; }
 .sidebar nav a:hover, .sidebar nav a[aria-current="page"] { color: white; background: rgba(255, 255, 255, 0.1); }
 .sidebar nav a[aria-current="page"] { box-shadow: inset 3px 0 var(--mint); }
 .local-note { margin-top: auto; display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.9rem; border: 1px solid rgba(255,255,255,.13); border-radius: 0.75rem; color: #d8e5dc; }
@@ -66,7 +66,7 @@ main { min-width: 0; padding: clamp(2rem, 5vw, 5rem); }
 .status-chip { display: inline-flex; padding: .32rem .6rem; border-radius: 999px; color: #236143; background: #e4f5e9; font-size: .72rem; font-weight: 800; text-transform: capitalize; }
 .status-chip--partial { color: #8b4e23; background: #fff0d9; }
 .latest-scan { display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding-top: 1.5rem; }
-.scan-product { margin: 0 0 .45rem; font-size: 1.25rem; font-weight: 750; }
+.scan-product { margin: 0 0 .45rem; overflow-wrap: anywhere; font-size: 1.25rem; font-weight: 750; }
 .muted { margin: 0; color: var(--muted); }
 .readiness { display: grid; min-width: 6rem; padding: .9rem; border-radius: .8rem; color: white; background: var(--forest); text-align: center; }
 .readiness span { font-family: Georgia, serif; font-size: 2rem; line-height: 1; }
@@ -185,7 +185,7 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(18rem, .65fr); gap: 1rem; }
 .distribution ul { display: grid; gap: .9rem; padding: 1rem 0 0; margin: 0; list-style: none; }
 .distribution li { display: grid; grid-template-columns: 3.5rem minmax(5rem, 1fr) 2rem; gap: .7rem; align-items: center; font-size: .75rem; }
-.distribution meter { width: 100%; height: .8rem; accent-color: #397454; }
+.distribution meter { min-width: 0; width: 100%; height: .8rem; accent-color: #397454; }
 .distribution strong { text-align: right; }
 .search-field { display: grid; gap: .3rem; color: var(--muted); font-size: .68rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .search-field input { width: min(20rem, 42vw); min-height: 2.45rem; padding: .55rem .7rem; border: 1px solid #cad2cb; border-radius: .55rem; color: var(--ink); background: white; text-transform: none; }
@@ -282,8 +282,8 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
   .app-shell { display: block; padding-bottom: 4.5rem; }
   .sidebar { position: fixed; z-index: 10; inset: auto 0 0; width: 100%; height: auto; padding: .6rem; }
   .brand, .local-note { display: none; }
-  .sidebar nav { grid-template-columns: repeat(4, 1fr); }
-  .sidebar nav a { padding: .7rem .4rem; text-align: center; }
+  .sidebar nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .sidebar nav a { padding: .7rem .4rem; overflow-wrap: anywhere; text-align: center; }
   .sidebar nav a[aria-current="page"] { box-shadow: inset 0 -3px var(--mint); }
   main { padding: 2rem 1rem; }
   .page-heading { display: grid; align-items: start; }
@@ -331,7 +331,7 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
 }
 
 @media (max-width: 390px) {
-  .sidebar nav a { font-size: .72rem; }
+  .sidebar nav a { padding-inline: .2rem; font-size: .72rem; }
   .score-band { grid-template-columns: 1fr; }
   .inventory-summary strong { font-size: 1.25rem; }
   .proposal-score-grid { grid-template-columns: 1fr; }
