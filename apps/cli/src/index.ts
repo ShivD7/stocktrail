@@ -28,6 +28,7 @@ import {
 } from '../../../packages/agent/src/proposals.js';
 import { formatProposalList, formatProposalPreview, formatProposalStatus } from './proposal-output.js';
 import { launchDashboard, waitForDashboardShutdown } from '../../dashboard/launch.js';
+import { safeErrorMessage } from '../../../packages/shared/src/redaction.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -383,6 +384,6 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
-  console.error(`StockTrail: ${error instanceof Error ? error.message : 'Unexpected error'}`);
+  console.error(`StockTrail: ${safeErrorMessage(error)}`);
   process.exitCode = 1;
 });
