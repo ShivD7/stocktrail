@@ -152,6 +152,7 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     await skipLink.focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#main-content').evaluate(element => element === document.activeElement), true);
+    assert.equal(new URL(page.url()).hash, '#/');
 
     for (const width of [320, 375, 1440]) {
       await page.setViewportSize({ width, height: width < 500 ? 780 : 900 });

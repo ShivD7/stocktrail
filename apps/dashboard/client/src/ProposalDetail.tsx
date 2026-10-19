@@ -143,6 +143,7 @@ export function ProposalDetail({ proposalId, onChanged }: { proposalId: string; 
   const [revision, setRevision] = useState(0);
   const [confirming, setConfirming] = useState<'apply' | 'revert' | null>(null);
   const confirmationTrigger = useRef<HTMLButtonElement | null>(null);
+  const restoreFocusAfterClose = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -157,14 +158,18 @@ export function ProposalDetail({ proposalId, onChanged }: { proposalId: string; 
     if (proposal) document.title = `${proposal.kind === 'revert' ? 'Revert' : 'Improvement'} proposal · StockTrail`;
   }, [proposal]);
 
+  useEffect(() => {
+    if (confirming !== null || !restoreFocusAfterClose.current) return;
+    restoreFocusAfterClose.current = false;
+    const trigger = confirmationTrigger.current;
+    if (trigger?.isConnected) trigger.focus();
+    else document.querySelector<HTMLElement>('#main-content h1')?.focus();
+  }, [confirming, proposal]);
+
   function refresh() { setRevision(value => value + 1); onChanged?.(); }
   function closeConfirmation() {
+    restoreFocusAfterClose.current = true;
     setConfirming(null);
-    const trigger = confirmationTrigger.current;
-    window.requestAnimationFrame(() => {
-      if (trigger?.isConnected) trigger.focus();
-      else document.querySelector<HTMLElement>('#main-content h1')?.focus();
-    });
   }
   function openConfirmation(kind: 'apply' | 'revert', trigger: HTMLButtonElement) {
     confirmationTrigger.current = trigger;

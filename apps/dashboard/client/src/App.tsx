@@ -104,7 +104,14 @@ function AppShell({ overview, onChanged }: { overview: DashboardOverview; onChan
   const section = route.name === 'product' ? 'products' : route.name === 'incident' ? 'incidents' : route.name;
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">Skip to content</a>
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={event => {
+          event.preventDefault();
+          document.getElementById('main-content')?.focus();
+        }}
+      >Skip to content</a>
       <aside className="sidebar">
         <a className="brand" href="#/" aria-label="StockTrail overview"><span className="brand-mark" aria-hidden="true">S</span><span>StockTrail</span></a>
         <nav aria-label="Primary navigation">
