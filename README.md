@@ -2,12 +2,21 @@
 
 A local diagnostic CLI and localhost dashboard for comparing Shopify inventory with what shoppers and search engines see. It is not an embedded Shopify app and requires no tunnel or deployment.
 
+This repository is the StockTrail **v0.1.0 source release**. The npm package remains
+private and unpublished, so install it from this checkout or use `npm link` rather
+than expecting a public-registry `npx` install. Checked-in evaluation results use
+synthetic fixtures; live ten-product performance, Shopify write/revert validation,
+unassisted setup, and final demo assets remain pending release checks.
+
 ## Quick start (PowerShell)
 
 Use Node.js 24 (or Node.js 22.13+) and npm.
 
 ```powershell
-npm install
+git clone https://github.com/ShivD7/stocktrail.git
+cd stocktrail
+npm ci
+npx playwright install chromium
 npm run dev -- --help
 npm run dev -- init --shop your-store.myshopify.com
 npm run dev -- connect
@@ -69,7 +78,7 @@ Review proposals with `proposal list` and `proposal status <id>`. Reject one loc
 
 `doctor` checks the Node version, data-directory permissions, database health, and configuration without reading the credential store or contacting Shopify. Add `--live` to verify the stored token and report read/write capability; it never performs a write. Read-only Admin requests have a three-attempt, 15-second total budget for transport errors, HTTP 429/5xx, and GraphQL throttling. Shopify `Retry-After` is honored within a five-second cap. Authentication, validation, and mutation failures are never automatically retried, and caller cancellation is distinct from timeout.
 
-`schedule set --interval-minutes <1-10080>` stores a monitored-product scan schedule. `schedule run` performs one pass only when due, while `schedule run-once` forces one pass and exits. Use the operating system scheduler to invoke `schedule run`; StockTrail does not leave a background daemon running. Runs select only active monitored products, prevent overlap, isolate per-product failures, update the next due time, and stop cleanly on Ctrl+C. Repeated findings update the existing incident lifecycle instead of creating duplicates.
+`schedule set --interval-minutes <1-10080>` stores a monitored-product scan schedule. `schedule run` performs one pass only when due, while `schedule run-once` forces one pass and exits. Use the operating system scheduler to invoke `schedule run`; StockTrail does not leave a background daemon running. Runs select only active monitored products, prevent overlap, isolate per-product failures, update the next due time, and stop cleanly on Ctrl+C. A persisted active claim older than six hours is treated as abandoned and can be atomically reclaimed; this recovers hard-killed runs but assumes a legitimate run should not remain active for six hours. Repeated findings update the existing incident lifecycle instead of creating duplicates.
 
 `performance --live` requires exactly ten active monitored products. It runs sequential browser diagnostics with cart submission disabled and prints only aggregate duration, completed/failed counts, and physical Admin API request count, including retries. It is an explicit live-store measurement and is not part of normal automated tests.
 
@@ -101,6 +110,24 @@ After editing TypeScript, rebuild or use `npm run dev -- <command>`. `npm start 
 
 These directories currently share one TypeScript build and package manifest. Split them into npm workspaces when independently built packages are needed.
 
+## Documentation
+
+- [Architecture](docs/architecture.md): implemented components, data flows, storage,
+  consistency, and a resume-friendly project summary.
+- [Privacy and local data](docs/privacy.md): credentials, private artifacts, network
+  boundaries, redaction, retention, and deletion.
+- [Current limitations](docs/limitations.md): supported storefront scope and pending
+  live release validation.
+- [Demo script](docs/demo-script.md): pending 60–90 second storyboard and screenshot
+  privacy checklist.
+- [Release checklist](docs/release-checklist.md): verification, CI, controlled live
+  testing, accessibility, packaging, and release gates.
+- [Phase 6 evaluation](docs/phase-6-evaluation.md): reproducible synthetic fixture
+  results, not live-store accuracy or SEO impact.
+- [Execution plan](docs/execution-plan.md): original roadmap; consult the current
+  README and architecture document for implemented behavior.
+- [CLI conversion](docs/migration.md): removal of the earlier embedded-app scaffold.
+
 ## Development
 
 ```powershell
@@ -111,9 +138,12 @@ npm run build
 
 ## Next implementation work
 
-1. Add broader theme adapters and explicit market/locale contexts.
-2. Complete the documented live ten-product measurement and Shopify write/revert validation.
-3. Run the Windows/Ubuntu CI workflow and complete release-week documentation and demo assets.
+1. Complete the pending local, CI, clean-install, and controlled live checks in the
+   [release checklist](docs/release-checklist.md).
+2. Record the real ten-product measurement and controlled Shopify write/revert
+   outcomes without committing private store data.
+3. Capture the privacy-reviewed screenshots and 60–90 second recording described in
+   the [demo script](docs/demo-script.md), then decide the publication path.
 
 The combined scan without `--browser` remains collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. The demo rule is simplified and must not be used as a live inventory verdict. Phase 6's reproducible synthetic evaluation and current live-validation limitations are recorded in `docs/phase-6-evaluation.md`.
 
