@@ -22,6 +22,7 @@
     "dev": "npm run build --silent && node dist/apps/cli/src/index.js",
     "start": "node dist/apps/cli/src/index.js",
     "test": "npm run build --silent && node --test tests/*.test.mjs",
+    "test:pack": "node scripts/pack-smoke.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {
