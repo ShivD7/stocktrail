@@ -68,11 +68,22 @@ export function retryDelayMs(
   return requested < remainingMs ? requested : null;
 }
 
+export function createDeadlineSignal(timeoutMs: number): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')),
+    Math.max(1, Math.ceil(timeoutMs)),
+  );
+  return {
+    signal: controller.signal,
+    dispose: () => clearTimeout(timeout),
+  };
+}
+
 export async function sleepWithSignal(delayMs: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) throw signal.reason;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(finish, delayMs);
-    timeout.unref();
     const onAbort = () => finish(signal.reason);
     function finish(error?: unknown) {
       clearTimeout(timeout);

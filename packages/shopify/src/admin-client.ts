@@ -1,5 +1,6 @@
 import { normalizeShop } from '../../shared/src/shop.js';
 import {
+  createDeadlineSignal,
   parseRetryAfterMs,
   resolveRetryPolicy,
   retryDelayMs,
@@ -89,7 +90,8 @@ export class ShopifyAdminClient {
       this.#throwIfCancelled(options.signal);
       const remainingMs = deadlineAt - this.#now();
       if (remainingMs <= 0) throw this.#timeoutError();
-      const deadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remainingMs)));
+      const deadline = createDeadlineSignal(remainingMs);
+      const deadlineSignal = deadline.signal;
       const signal = options.signal
         ? AbortSignal.any([options.signal, deadlineSignal])
         : deadlineSignal;
@@ -111,6 +113,7 @@ export class ShopifyAdminClient {
           },
         );
       } catch (error) {
+        deadline.dispose();
         this.#throwIfCancelled(options.signal);
         if (deadlineSignal.aborted || this.#now() >= deadlineAt ||
             (error instanceof Error && error.name === 'TimeoutError')) {
@@ -122,6 +125,7 @@ export class ShopifyAdminClient {
         }
         throw new ShopifyHttpError(`Could not reach Shopify for ${this.shop}. Check the shop hostname and your connection.`);
       }
+      deadline.dispose();
 
       const apiVersion = response.headers.get('x-shopify-api-version');
       const metadata: ShopifyRequestMetadata = {
@@ -205,7 +209,8 @@ export class ShopifyAdminClient {
     const remainingMs = deadlineAt - this.#now();
     const delayMs = retryDelayMs(this.#retryPolicy, retryNumber, retryAfterMs, remainingMs);
     if (delayMs === null) throw this.#timeoutError();
-    const deadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remainingMs)));
+    const deadline = createDeadlineSignal(remainingMs);
+    const deadlineSignal = deadline.signal;
     const signal = callerSignal
       ? AbortSignal.any([callerSignal, deadlineSignal])
       : deadlineSignal;
@@ -214,6 +219,8 @@ export class ShopifyAdminClient {
     } catch {
       this.#throwIfCancelled(callerSignal);
       throw this.#timeoutError();
+    } finally {
+      deadline.dispose();
     }
   }
 }

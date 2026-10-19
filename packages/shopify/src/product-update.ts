@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { normalizeShop } from '../../shared/src/shop.js';
 import { productContentSchema, type ProductContent, type ProposalField } from '../../shared/src/proposals.js';
+import { createDeadlineSignal } from '../../shared/src/resilience.js';
 import { SHOPIFY_API_VERSION } from './admin-client.js';
 
 type Fetch = typeof globalThis.fetch;
@@ -65,16 +66,19 @@ export class ShopifyProductMutationClient {
     if (Object.keys(input).length === 1) throw new Error('Product update contains no approved field changes.');
 
     let response: Response;
+    const deadline = createDeadlineSignal(15_000);
     try {
       response = await this.#fetcher(`https://${this.#shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': this.#token },
         body: JSON.stringify({ query: mutation, variables: { product: input } }),
         redirect: 'error',
-        signal: AbortSignal.timeout(15_000),
+        signal: deadline.signal,
       });
     } catch {
       throw new ShopifyMutationOutcomeUnknownError(['transport_failure']);
+    } finally {
+      deadline.dispose();
     }
     let raw: unknown;
     try { raw = await response.json(); } catch { throw new ShopifyMutationOutcomeUnknownError(['unreadable_response']); }
