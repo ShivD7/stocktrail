@@ -12,6 +12,7 @@ npm run dev -- --help
 npm run dev -- init --shop your-store.myshopify.com
 npm run dev -- connect
 npm run dev -- doctor
+npm run dev -- doctor --live
 npm run dev -- import --preview --limit 5
 npm run dev -- import
 npm run dev -- monitor candidates
@@ -30,6 +31,10 @@ npm run dev -- proposal status <proposal-id>
 npm run dev -- apply <proposal-id>
 npm run dev -- revert <applied-proposal-id>
 npm run dev -- dashboard
+npm run dev -- schedule set --interval-minutes 60
+npm run dev -- schedule status
+npm run dev -- schedule run-once
+npm run dev -- performance --live
 ```
 
 The demo uses two synthetic products, prints one FAIL and one PASS, and saves a JSON evidence report under `.stocktrail/reports`. It makes no network requests. A diagnostic contradiction exits with code **2**; command/configuration errors exit with **1**; success exits with **0**.
@@ -62,7 +67,15 @@ Review proposals with `proposal list` and `proposal status <id>`. Reject one loc
 
 `dashboard` starts the React interface at `http://127.0.0.1:4173` and opens it in the default browser. Use `--port <1-65535>` to choose another loopback port or `--no-open` to keep the browser closed. Its local API exposes strict product, incident, proposal, connection, import, monitoring, scan, improve, rerun, apply, reconcile, reject, and revert contracts over the same SQLite index and integrity-checked artifacts used by the CLI. Evidence HTML is served as plain text and API responses are never cached. Every request must use the exact bound `127.0.0.1:<port>` authority; every mutation must also use the exact matching Origin, and no CORS access is granted. Incident reruns execute only that incident's active shop-scoped assertion against fresh browser evidence, always with cart submission disabled. Press Ctrl+C in the starting terminal to stop the service.
 
+`doctor` checks the Node version, data-directory permissions, database health, and configuration without reading the credential store or contacting Shopify. Add `--live` to verify the stored token and report read/write capability; it never performs a write. Read-only Admin requests have a three-attempt, 15-second total budget for transport errors, HTTP 429/5xx, and GraphQL throttling. Shopify `Retry-After` is honored within a five-second cap. Authentication, validation, and mutation failures are never automatically retried, and caller cancellation is distinct from timeout.
+
+`schedule set --interval-minutes <1-10080>` stores a monitored-product scan schedule. `schedule run` performs one pass only when due, while `schedule run-once` forces one pass and exits. Use the operating system scheduler to invoke `schedule run`; StockTrail does not leave a background daemon running. Runs select only active monitored products, prevent overlap, isolate per-product failures, update the next due time, and stop cleanly on Ctrl+C. Repeated findings update the existing incident lifecycle instead of creating duplicates.
+
+`performance --live` requires exactly ten active monitored products. It runs sequential browser diagnostics with cart submission disabled and prints only aggregate duration, completed/failed counts, and physical Admin API request count, including retries. It is an explicit live-store measurement and is not part of normal automated tests.
+
 Run `npm run dev -- logout` to delete the configured store's token from the OS credential store. A failed verification leaves any existing saved credential unchanged. Read-only Admin import and evidence commands retrieve this credential through the Shopify adapter; it is never sent to the public Ajax endpoint.
+
+To erase StockTrail data, run `npm run dev -- delete-data --confirm your-store.myshopify.com`. The confirmation must exactly match the configured shop. The command removes the StockTrail configuration, SQLite files, evidence/proposal artifacts, reports, and stored token after validating the expected entry types. It preserves unrelated files in the containing directory and refuses unsafe roots or unexpected links/types.
 
 To use the command directly while developing:
 
@@ -99,9 +112,9 @@ npm run build
 ## Next implementation work
 
 1. Add broader theme adapters and explicit market/locale contexts.
-2. Add scheduled polling and incident deduplication resilience.
-3. Add remediation previews after the diagnostic workflow is stable.
+2. Complete the documented live ten-product measurement and Shopify write/revert validation.
+3. Run the Windows/Ubuntu CI workflow and complete release-week documentation and demo assets.
 
-The combined scan without `--browser` remains collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. `doctor` checks local configuration only; use `connect` to validate and store a Shopify token. The demo rule is simplified and must not be used as a live inventory verdict.
+The combined scan without `--browser` remains collection-only; standalone `scan --admin`, `scan --ajax`, and offline `scan --demo` remain available. The demo rule is simplified and must not be used as a live inventory verdict. Phase 6's reproducible synthetic evaluation and current live-validation limitations are recorded in `docs/phase-6-evaluation.md`.
 
 The previous Shopify web-app scaffold and its backup have been removed, as recorded in `docs/migration.md`. Local conversion does not delete or modify any existing registration in Shopify. The local CLI authenticates directly to the configured shop; it does not run inside Shopify Admin.

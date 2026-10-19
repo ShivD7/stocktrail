@@ -61,7 +61,7 @@ test('atomically persists a private bundle and indexes only integrity metadata',
 
     const database = new DatabaseSync(join(directory, 'stocktrail.sqlite'), { readOnly: true });
     try {
-      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 7);
+      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 8);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_runs').get().count, 1);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_sources').get().count, 4);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM evidence_artifacts').get().count, 2);

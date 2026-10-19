@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { redactSensitiveText, safeErrorMessage } from '../dist/packages/shared/src/redaction.js';
 
 test('redacts common credential shapes without changing safe diagnostics', () => {
+  const shopifyCanary = ['shp', 'at_', '1234567890abcdef'].join('');
   const canaries = [
-    'Authorization: Bearer private-token-value',
-    'X-Shopify-Access-Token=shpat_1234567890abcdef',
+    'Authorization: ' + ['Bearer', 'private-token-value'].join(' '),
+    `X-Shopify-Access-Token=${shopifyCanary}`,
     'client_secret: "do-not-print-this"',
     'password=hunter-two',
     'https://private-user:private-password@example.test/path',

@@ -98,7 +98,7 @@ test('persists only proposal metadata in SQLite and integrity-indexed content in
 
     const database = new DatabaseSync(join(directory, 'stocktrail.sqlite'), { readOnly: true });
     try {
-      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 7);
+      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 8);
       const sql = database.prepare("SELECT sql FROM sqlite_master WHERE name LIKE 'proposal%'").all().map(row => row.sql).join('\n');
       assert.doesNotMatch(sql, /description_html|seo_description|access.?token|request.?id|header|raw.?response/i);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM proposal_events').get().count, 2);

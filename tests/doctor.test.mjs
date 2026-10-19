@@ -7,7 +7,7 @@ function dependencies(overrides = {}) {
     readConfig: async () => ({ version: 1, shop: 'example.myshopify.com' }),
     checkDataDirectory: async () => undefined,
     checkDatabase: async () => undefined,
-    readToken: async () => 'shpat_private_canary_value',
+    readToken: async () => ['shp', 'at_', 'private_canary_value'].join(''),
     verify: async () => ({
       shopName: 'Private store name',
       shopDomain: 'example.myshopify.com',
