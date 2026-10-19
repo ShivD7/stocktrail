@@ -53,6 +53,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.match(run('import', '--preview', '--limit', 'five').stderr, /whole number from 1 to 250/);
     assert.match(run('doctor', '--preview').stderr, /only supported with import/);
     assert.match(run('doctor', '--limit', '5').stderr, /only supported with import/);
+    assert.match(run('scan', '--live').stderr, /only supported with doctor/);
     assert.match(
       run('doctor', '--product-id', 'gid://shopify/Product/1').stderr,
       /only supported with monitor, scan, or improve/,
@@ -62,7 +63,7 @@ test('CLI config, diagnostics, errors, and evidence work from an unrelated direc
     assert.equal(run('init', '--shop', 'replacement.myshopify.com').status, 1);
     assert.equal(JSON.parse(await readFile(join(data, 'config.json'), 'utf8')).shop, 'example.myshopify.com');
     assert.equal(run('doctor').status, 0);
-    assert.match(run('doctor').stdout, /stocktrail connect/);
+    assert.match(run('doctor').stdout, /Connection: not checked; use doctor --live/);
     assert.equal(run('monitor').status, 1);
     assert.match(run('monitor').stderr, /monitor list/);
     assert.equal(run('monitor', 'list').status, 0);

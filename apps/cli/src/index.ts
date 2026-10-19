@@ -29,6 +29,7 @@ import {
 import { formatProposalList, formatProposalPreview, formatProposalStatus } from './proposal-output.js';
 import { launchDashboard, waitForDashboardShutdown } from '../../dashboard/launch.js';
 import { safeErrorMessage } from '../../../packages/shared/src/redaction.js';
+import { diagnoseSetup } from '../../../packages/agent/src/doctor.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -38,7 +39,7 @@ Usage: stocktrail <command> [options]
   connect                               Verify and securely store a Shopify token
   login                                 Alias for connect
   logout                                Delete the stored Shopify token
-  doctor                                Check local setup (offline)
+  doctor [--live]                       Check local setup and optional Shopify connection
   scan --demo                           Run synthetic diagnostics and save evidence
   test                                  Report stored assertions without live browser evidence
   test --browser [--cart-add]           Rerun stored assertions with fresh browser evidence
@@ -118,6 +119,7 @@ async function main() {
       browser: { type: 'boolean' }, 'cart-add': { type: 'boolean' },
       approve: { type: 'string' }, 'acknowledge-revert-risk': { type: 'boolean' },
       reconcile: { type: 'boolean' },
+      live: { type: 'boolean' },
       port: { type: 'string' }, 'no-open': { type: 'boolean' },
       'product-id': { type: 'string' },
     },
@@ -147,6 +149,7 @@ async function main() {
     throw new Error('--acknowledge-revert-risk is only supported with apply.');
   }
   if (values.reconcile !== undefined && command !== 'proposal') throw new Error('--reconcile is only supported with proposal status.');
+  if (values.live !== undefined && command !== 'doctor') throw new Error('--live is only supported with doctor.');
   if (values.port !== undefined && command !== 'dashboard') throw new Error('--port is only supported with dashboard.');
   if (values['no-open'] !== undefined && command !== 'dashboard') throw new Error('--no-open is only supported with dashboard.');
   const directory = dataDirectory();
@@ -180,11 +183,9 @@ async function main() {
       return;
     }
     case 'doctor': {
-      const config = await readConfig(directory);
-      console.log(`OK Node ${process.versions.node}`);
-      console.log(`OK Configuration: ${directory}`);
-      console.log(config.shop ? `OK Shop: ${config.shop}` : 'INFO Shop is not configured; demo mode is available.');
-      console.log('INFO Offline setup check only. Use stocktrail connect to verify and store a Shopify token.');
+      for (const check of await diagnoseSetup(directory, values.live === true)) {
+        console.log(`${check.status.toUpperCase()} ${check.label}: ${check.detail}`);
+      }
       return;
     }
     case 'dashboard': {
