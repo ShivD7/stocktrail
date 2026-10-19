@@ -9,6 +9,8 @@ import {
 
 export type ScheduledScanStatus = 'completed' | 'not_due' | 'already_running' | 'cancelled';
 
+export const SCHEDULE_STALE_RUN_MS = 6 * 60 * 60 * 1_000;
+
 export type ScheduledScanSummary = {
   status: ScheduledScanStatus;
   selectedProductCount: number;
@@ -89,12 +91,19 @@ export async function runScheduledScans(
   if (!config.shop) throw new Error('No shop is configured. Run stocktrail init first.');
   const runId = dependencies.uuid();
   const startedAt = dependencies.now().toISOString();
+  const staleBeforeAt = new Date(Date.parse(startedAt) - SCHEDULE_STALE_RUN_MS).toISOString();
   const repository = await dependencies.openRepository(directory);
   let productIds: string[];
   try {
     const before = repository.scanSchedule(config.shop);
     if (!before) throw new Error('No scan schedule is configured.');
-    const claimed = repository.claimScanSchedule(config.shop, runId, startedAt, options.force === true);
+    const claimed = repository.claimScanSchedule(
+      config.shop,
+      runId,
+      startedAt,
+      options.force === true,
+      staleBeforeAt,
+    );
     if (!claimed) return emptySummary(before.activeRunId === null ? 'not_due' : 'already_running');
     productIds = repository.activeMonitoredProductGids(config.shop);
   } finally {

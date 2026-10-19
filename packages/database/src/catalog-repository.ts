@@ -895,19 +895,39 @@ export class CatalogRepository {
     } : null;
   }
 
-  claimScanSchedule(shop: string, runId: string, startedAt: string, force: boolean): ScanSchedule | null {
+  claimScanSchedule(
+    shop: string,
+    runId: string,
+    startedAt: string,
+    force: boolean,
+    staleBeforeAt?: string,
+  ): ScanSchedule | null {
     if (!runId.trim()) throw new Error('Schedule run ID cannot be empty.');
     this.validateTimestamp(startedAt, 'Schedule start time');
+    if (staleBeforeAt !== undefined) {
+      this.validateTimestamp(staleBeforeAt, 'Schedule stale-run boundary');
+      if (Date.parse(staleBeforeAt) > Date.parse(startedAt)) {
+        throw new Error('Schedule stale-run boundary cannot follow the start time.');
+      }
+    }
     return this.transaction(() => {
       const schedule = this.scanSchedule(shop);
       if (!schedule) throw new Error('No scan schedule is configured.');
-      if (schedule.activeRunId !== null) return null;
+      const staleClaim = schedule.activeRunId !== null && staleBeforeAt !== undefined &&
+        schedule.lastStartedAt !== null && Date.parse(schedule.lastStartedAt) <= Date.parse(staleBeforeAt);
+      if (schedule.activeRunId !== null && !staleClaim) return null;
       if (!force && Date.parse(schedule.nextDueAt) > Date.parse(startedAt)) return null;
-      const updated = this.database.prepare(`
-        UPDATE scan_schedules SET active_run_id = ?, last_started_at = ?
-        WHERE shop_id = (SELECT id FROM shops WHERE domain = ?)
-          AND active_run_id IS NULL
-      `).run(runId, startedAt, shop);
+      const updated = staleClaim
+        ? this.database.prepare(`
+            UPDATE scan_schedules SET active_run_id = ?, last_started_at = ?
+            WHERE shop_id = (SELECT id FROM shops WHERE domain = ?)
+              AND active_run_id IS NOT NULL AND last_started_at <= ?
+          `).run(runId, startedAt, shop, staleBeforeAt!)
+        : this.database.prepare(`
+            UPDATE scan_schedules SET active_run_id = ?, last_started_at = ?
+            WHERE shop_id = (SELECT id FROM shops WHERE domain = ?)
+              AND active_run_id IS NULL
+          `).run(runId, startedAt, shop);
       return Number(updated.changes) === 1 ? this.scanSchedule(shop) : null;
     });
   }

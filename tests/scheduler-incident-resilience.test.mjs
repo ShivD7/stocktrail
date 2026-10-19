@@ -66,6 +66,7 @@ test('repeated scheduled failures update one incident and its last-seen time', a
     });
     repository.addMonitoredProduct(shop, productId);
     repository.configureScanSchedule(shop, 30, clock);
+    repository.claimScanSchedule(shop, 'interrupted-run', '2026-10-18T05:59:59.999Z', true);
     repository.close();
 
     const dependencies = {

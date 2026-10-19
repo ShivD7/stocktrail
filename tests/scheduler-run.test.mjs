@@ -99,6 +99,36 @@ test('scheduled run reports not-due and overlapping claims without scanning', as
   }
 });
 
+test('scheduled run recovers a persisted stale claim but preserves a live claim', async () => {
+  const directory = await fixture(1);
+  let scans = 0;
+  try {
+    let repository = await openCatalogRepository(directory);
+    repository.claimScanSchedule(shop, 'interrupted-run', '2026-10-18T06:30:00.000Z', true);
+    repository.close();
+    const result = await runScheduledScans(
+      directory,
+      { force: true },
+      dependencies(async () => { scans += 1; }, '2026-10-18T12:30:00.000Z'),
+    );
+    assert.equal(result.status, 'completed');
+    assert.equal(scans, 1);
+
+    repository = await openCatalogRepository(directory);
+    repository.claimScanSchedule(shop, 'live-run', '2026-10-18T12:31:00.000Z', true);
+    repository.close();
+    const blocked = await runScheduledScans(
+      directory,
+      { force: true },
+      dependencies(async () => { scans += 1; }, '2026-10-18T18:30:59.999Z'),
+    );
+    assert.equal(blocked.status, 'already_running');
+    assert.equal(scans, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('cancellation reaches the active scan and stops before the next product', async () => {
   const directory = await fixture();
   const controller = new AbortController();

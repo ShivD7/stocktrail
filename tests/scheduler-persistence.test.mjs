@@ -97,3 +97,31 @@ test('schedule claims prevent overlap and completion advances the next due time'
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('persisted claims block live overlap and become recoverable at the stale boundary', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'stocktrail-schedule-recovery-'));
+  let repository = await openCatalogRepository(directory);
+  try {
+    repository.importCatalog(shop, [product(1)], true, provenance);
+    repository.configureScanSchedule(shop, 15, '2026-10-18T12:00:00.000Z');
+    repository.claimScanSchedule(shop, 'crashed-run', '2026-10-18T12:00:00.000Z', true);
+    repository.close();
+
+    repository = await openCatalogRepository(directory);
+    assert.equal(repository.claimScanSchedule(
+      shop, 'too-soon', '2026-10-18T17:59:59.999Z', true, '2026-10-18T11:59:59.999Z',
+    ), null);
+    assert.equal(repository.claimScanSchedule(
+      shop, 'recovered-run', '2026-10-18T18:00:00.000Z', true, '2026-10-18T12:00:00.000Z',
+    )?.activeRunId, 'recovered-run');
+    assert.throws(
+      () => repository.completeScanSchedule(shop, 'crashed-run', '2026-10-18T18:00:01.000Z'),
+      /not owned by this run/,
+    );
+    repository.completeScanSchedule(shop, 'recovered-run', '2026-10-18T18:01:00.000Z');
+    assert.equal(repository.scanSchedule(shop)?.activeRunId, null);
+  } finally {
+    repository.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
