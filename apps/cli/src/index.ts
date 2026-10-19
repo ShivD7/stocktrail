@@ -30,6 +30,7 @@ import { formatProposalList, formatProposalPreview, formatProposalStatus } from 
 import { launchDashboard, waitForDashboardShutdown } from '../../dashboard/launch.js';
 import { safeErrorMessage } from '../../../packages/shared/src/redaction.js';
 import { diagnoseSetup } from '../../../packages/agent/src/doctor.js';
+import { deleteLocalData } from '../../../packages/agent/src/data-deletion.js';
 
 const help = `StockTrail — local Shopify inventory diagnostics (starter)
 
@@ -39,6 +40,7 @@ Usage: stocktrail <command> [options]
   connect                               Verify and securely store a Shopify token
   login                                 Alias for connect
   logout                                Delete the stored Shopify token
+  delete-data --confirm <shop>          Delete local data and the stored token
   doctor [--live]                       Check local setup and optional Shopify connection
   scan --demo                           Run synthetic diagnostics and save evidence
   test                                  Report stored assertions without live browser evidence
@@ -120,6 +122,7 @@ async function main() {
       approve: { type: 'string' }, 'acknowledge-revert-risk': { type: 'boolean' },
       reconcile: { type: 'boolean' },
       live: { type: 'boolean' },
+      confirm: { type: 'string' },
       port: { type: 'string' }, 'no-open': { type: 'boolean' },
       'product-id': { type: 'string' },
     },
@@ -150,6 +153,7 @@ async function main() {
   }
   if (values.reconcile !== undefined && command !== 'proposal') throw new Error('--reconcile is only supported with proposal status.');
   if (values.live !== undefined && command !== 'doctor') throw new Error('--live is only supported with doctor.');
+  if (values.confirm !== undefined && command !== 'delete-data') throw new Error('--confirm is only supported with delete-data.');
   if (values.port !== undefined && command !== 'dashboard') throw new Error('--port is only supported with dashboard.');
   if (values['no-open'] !== undefined && command !== 'dashboard') throw new Error('--no-open is only supported with dashboard.');
   const directory = dataDirectory();
@@ -180,6 +184,15 @@ async function main() {
       console.log(deleted
         ? `Logged out of ${config.shop}; the stored token was deleted.`
         : `No stored token was found for ${config.shop}.`);
+      return;
+    }
+    case 'delete-data': {
+      if (!values.confirm) throw new Error('Use delete-data --confirm <configured-shop-domain>.');
+      const result = await deleteLocalData(directory, values.confirm);
+      console.log(`Deleted ${result.removedEntries} local StockTrail data entries.`);
+      console.log(result.credentialDeleted
+        ? 'Deleted the stored Shopify token.'
+        : 'No stored Shopify token was found.');
       return;
     }
     case 'doctor': {
