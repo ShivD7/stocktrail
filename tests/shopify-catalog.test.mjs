@@ -294,3 +294,69 @@ test('rejects a malformed GraphQL errors member even when data is present', asyn
   }));
   await assert.rejects(() => client.query('query Synthetic { shop { name } }'), ShopifyResponseError);
 });
+
+test('retries read-only HTTP 429 and 5xx responses with deterministic capped delays', async () => {
+  const delays = [];
+  const responses = [
+    new Response(null, { status: 429, headers: { 'retry-after': '20' } }),
+    new Response(null, { status: 503 }),
+    response({ shop: { name: 'Synthetic' } }),
+  ];
+  const client = new ShopifyAdminClient(shop, credential, async () => responses.shift(), {
+    retryPolicy: {
+      maxAttempts: 3,
+      baseDelayMs: 100,
+      maxDelayMs: 250,
+      maxRetryAfterMs: 500,
+      totalDeadlineMs: 5_000,
+    },
+    sleep: async delayMs => { delays.push(delayMs); },
+  });
+
+  const result = await client.query('query Synthetic { shop { name } }');
+  assert.equal(result.data.shop.name, 'Synthetic');
+  assert.deepEqual(delays, [500, 200]);
+  assert.equal(responses.length, 0);
+});
+
+test('retries transport failures and GraphQL THROTTLED but not other GraphQL errors', async () => {
+  const delays = [];
+  let requests = 0;
+  const client = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    if (requests === 1) throw new Error('private transport detail');
+    if (requests === 2) return Response.json({
+      errors: [{ message: 'private throttle detail', extensions: { code: 'THROTTLED' } }],
+    });
+    return response({ shop: { name: 'Synthetic' } });
+  }, {
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 20, totalDeadlineMs: 1_000 },
+    sleep: async delayMs => { delays.push(delayMs); },
+  });
+
+  assert.equal((await client.query('query Synthetic { shop { name } }')).data.shop.name, 'Synthetic');
+  assert.equal(requests, 3);
+  assert.deepEqual(delays, [10, 20]);
+
+  let rejectedRequests = 0;
+  const rejected = new ShopifyAdminClient(shop, credential, async () => {
+    rejectedRequests += 1;
+    return Response.json({ errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] });
+  }, { sleep: async () => undefined });
+  await assert.rejects(() => rejected.query('query Synthetic { shop { name } }'), ShopifyGraphqlError);
+  assert.equal(rejectedRequests, 1);
+});
+
+test('never retries a mutation passed to the read client', async () => {
+  let requests = 0;
+  const client = new ShopifyAdminClient(shop, credential, async () => {
+    requests += 1;
+    return new Response(null, { status: 503 });
+  }, { retryPolicy: { maxAttempts: 5 }, sleep: async () => undefined });
+
+  await assert.rejects(
+    () => client.query('mutation Synthetic { productUpdate(product: { id: "gid://shopify/Product/1" }) { product { id } } }'),
+    ShopifyHttpError,
+  );
+  assert.equal(requests, 1);
+});
