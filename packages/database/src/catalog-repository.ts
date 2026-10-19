@@ -57,6 +57,14 @@ export type MonitoringCandidate = {
   present: boolean;
 };
 
+export type ScanSchedule = {
+  intervalMinutes: number;
+  nextDueAt: string;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  activeRunId: string | null;
+};
+
 export type EvidenceRunMetadata = {
   runId: string;
   status: 'complete' | 'partial';
@@ -570,6 +578,16 @@ const migrations: Migration[] = [
     CREATE INDEX IF NOT EXISTS proposals_status ON proposals(status, verification_status);
     CREATE INDEX IF NOT EXISTS proposal_events_proposal_created ON proposal_events(proposal_id, created_at);
   `,
+  `
+    CREATE TABLE IF NOT EXISTS scan_schedules (
+      shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+      interval_minutes INTEGER NOT NULL CHECK (interval_minutes BETWEEN 1 AND 10080),
+      next_due_at TEXT NOT NULL,
+      last_started_at TEXT,
+      last_completed_at TEXT,
+      active_run_id TEXT
+    );
+  `,
 ];
 
 function count(statement: StatementSync, ...values: SQLInputValue[]): number {
@@ -819,6 +837,103 @@ export class CatalogRepository {
       monitored: row.monitored === 1,
       present: row.present === 1,
     }));
+  }
+
+  activeMonitoredProductGids(shop: string): string[] {
+    return (this.database.prepare(`
+      SELECT products.shopify_gid AS product_gid
+      FROM monitored_products
+      JOIN products ON products.id = monitored_products.product_id
+        AND products.shop_id = monitored_products.shop_id
+      JOIN shops ON shops.id = monitored_products.shop_id
+      WHERE shops.domain = ? AND products.is_present = 1
+      ORDER BY products.shopify_gid
+      LIMIT ?
+    `).all(shop, MONITORED_PRODUCT_LIMIT) as Array<{ product_gid: string }>)
+      .map(row => row.product_gid);
+  }
+
+  configureScanSchedule(shop: string, intervalMinutes: number, nextDueAt: string): ScanSchedule {
+    if (!Number.isSafeInteger(intervalMinutes) || intervalMinutes < 1 || intervalMinutes > 10_080) {
+      throw new Error('Schedule interval must be a whole number from 1 to 10080 minutes.');
+    }
+    this.validateTimestamp(nextDueAt, 'Schedule next-due time');
+    const shopRow = this.database.prepare('SELECT id FROM shops WHERE domain = ?').get(shop) as
+      { id: number } | undefined;
+    if (!shopRow) throw new Error('Cannot schedule scans before importing the configured shop.');
+    this.database.prepare(`
+      INSERT INTO scan_schedules (shop_id, interval_minutes, next_due_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(shop_id) DO UPDATE SET
+        interval_minutes = excluded.interval_minutes,
+        next_due_at = excluded.next_due_at
+    `).run(shopRow.id, intervalMinutes, nextDueAt);
+    return this.scanSchedule(shop)!;
+  }
+
+  scanSchedule(shop: string): ScanSchedule | null {
+    const row = this.database.prepare(`
+      SELECT scan_schedules.interval_minutes, scan_schedules.next_due_at,
+        scan_schedules.last_started_at, scan_schedules.last_completed_at,
+        scan_schedules.active_run_id
+      FROM scan_schedules
+      JOIN shops ON shops.id = scan_schedules.shop_id
+      WHERE shops.domain = ?
+    `).get(shop) as {
+      interval_minutes: number;
+      next_due_at: string;
+      last_started_at: string | null;
+      last_completed_at: string | null;
+      active_run_id: string | null;
+    } | undefined;
+    return row ? {
+      intervalMinutes: Number(row.interval_minutes),
+      nextDueAt: row.next_due_at,
+      lastStartedAt: row.last_started_at,
+      lastCompletedAt: row.last_completed_at,
+      activeRunId: row.active_run_id,
+    } : null;
+  }
+
+  claimScanSchedule(shop: string, runId: string, startedAt: string, force: boolean): ScanSchedule | null {
+    if (!runId.trim()) throw new Error('Schedule run ID cannot be empty.');
+    this.validateTimestamp(startedAt, 'Schedule start time');
+    return this.transaction(() => {
+      const schedule = this.scanSchedule(shop);
+      if (!schedule) throw new Error('No scan schedule is configured.');
+      if (schedule.activeRunId !== null) return null;
+      if (!force && Date.parse(schedule.nextDueAt) > Date.parse(startedAt)) return null;
+      const updated = this.database.prepare(`
+        UPDATE scan_schedules SET active_run_id = ?, last_started_at = ?
+        WHERE shop_id = (SELECT id FROM shops WHERE domain = ?)
+          AND active_run_id IS NULL
+      `).run(runId, startedAt, shop);
+      return Number(updated.changes) === 1 ? this.scanSchedule(shop) : null;
+    });
+  }
+
+  completeScanSchedule(shop: string, runId: string, completedAt: string): ScanSchedule {
+    this.validateTimestamp(completedAt, 'Schedule completion time');
+    return this.transaction(() => {
+      const schedule = this.scanSchedule(shop);
+      if (!schedule || schedule.activeRunId !== runId) {
+        throw new Error('The scheduled scan is not owned by this run.');
+      }
+      const nextDueAt = new Date(Date.parse(completedAt) + schedule.intervalMinutes * 60_000).toISOString();
+      this.database.prepare(`
+        UPDATE scan_schedules SET
+          active_run_id = NULL, last_completed_at = ?, next_due_at = ?
+        WHERE shop_id = (SELECT id FROM shops WHERE domain = ?) AND active_run_id = ?
+      `).run(completedAt, nextDueAt, shop, runId);
+      return this.scanSchedule(shop)!;
+    });
+  }
+
+  abandonScanSchedule(shop: string, runId: string): void {
+    this.database.prepare(`
+      UPDATE scan_schedules SET active_run_id = NULL
+      WHERE shop_id = (SELECT id FROM shops WHERE domain = ?) AND active_run_id = ?
+    `).run(shop, runId);
   }
 
   validateAdminEvidenceTarget(shop: string, productGid: string): void {
@@ -1880,6 +1995,13 @@ export class CatalogRepository {
       activeMonitoredProductCount: Number(row.active ?? 0),
       limit: MONITORED_PRODUCT_LIMIT,
     };
+  }
+
+  private validateTimestamp(value: string, label: string): void {
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) {
+      throw new Error(`${label} must be a canonical UTC timestamp.`);
+    }
   }
 
   private validateProductGid(productGid: string): void {
