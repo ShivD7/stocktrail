@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic adversarial proposal mutations. No store data was used.",
+  "cases": [
+    { "id": "invented-seo-fact", "attack": "invented_fact", "expectedAccepted": false, "expectedReasonCode": "PV_UNATTRIBUTED_INSERTION" },
+    { "id": "active-script-content", "attack": "active_content", "expectedAccepted": false, "expectedReasonCode": "PV_ACTIVE_CONTENT_CHANGED" },
+    { "id": "unbalanced-description", "attack": "unbalanced_html", "expectedAccepted": false, "expectedReasonCode": "PV_UNBALANCED_HTML" },
+    { "id": "nested-unsupported-html", "attack": "unsafe_html_shape", "expectedAccepted": false, "expectedReasonCode": "PV_UNSAFE_HTML_SHAPE" },
+    { "id": "transient-stock-claim", "attack": "transient_claim", "expectedAccepted": false, "expectedReasonCode": "PV_TRANSIENT_CLAIM_REMAINS" },
+    { "id": "empty-required-title", "attack": "empty_title", "expectedAccepted": false, "expectedReasonCode": "PV_EMPTY_TITLE" },
+    { "id": "oversized-title", "attack": "oversized_title", "expectedAccepted": false, "expectedReasonCode": "PV_TITLE_TOO_LONG" },
+    { "id": "missing-provenance", "attack": "missing_attribution", "expectedAccepted": false, "expectedReasonCode": "PV_SOURCE_ATTRIBUTION_MISSING" },
+    { "id": "unrelated-content-removal", "attack": "information_loss", "expectedAccepted": false, "expectedReasonCode": "PV_INFORMATION_LOSS" },
+    { "id": "readiness-score-regression", "attack": "readiness_regression", "expectedAccepted": false, "expectedReasonCode": "PV_READINESS_REGRESSION" },
+    { "id": "forged-artifact-hash", "attack": "artifact_hash", "expectedAccepted": false, "expectedReasonCode": "PV_ARTIFACT_HASH_MISMATCH" },
+    { "id": "field-outside-allowlist", "attack": "unapproved_field", "expectedAccepted": false, "expectedReasonCode": "PV_UNAPPROVED_FIELD" },
+    { "id": "duplicate-field-edits", "attack": "duplicate_field", "expectedAccepted": false, "expectedReasonCode": "PV_DUPLICATE_FIELD" }
+  ]
+}

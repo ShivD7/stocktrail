@@ -12,3 +12,8 @@ available evidence cannot support either conclusion.
 
 The evaluation runner validates the manifest before calculating its reproducible
 confusion matrix and per-rule precision report.
+
+`unsafe-proposal-cases.json` contains adversarial proposal mutations. The
+proposal evaluator passes each one through the production validator and reports
+how many unsafe proposals were accepted. Release evaluation requires that count
+to remain zero.
