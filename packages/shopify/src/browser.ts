@@ -8,6 +8,7 @@ import {
   type BrowserReasonCode,
 } from '../../shared/src/browser-evidence.js';
 import { deriveHtmlProductTarget, isPublicNetworkAddress } from './ajax.js';
+import { seedStorefrontSession, type StorefrontSession } from './storefront-session.js';
 
 const NAVIGATION_MS = 15_000;
 const ACTION_MS = 5_000;
@@ -188,6 +189,7 @@ export async function collectBrowserEvidence(
   ajax: AjaxNormalizedProduct,
   cartAuthorized: boolean,
   now: () => Date = () => new Date(),
+  session?: StorefrontSession,
 ): Promise<BrowserEvidence> {
   const startedAt = now().toISOString();
   if (admin.product.onlineStoreUrl === null) return browserEvidenceSchema.parse({
@@ -214,6 +216,7 @@ export async function collectBrowserEvidence(
       const ajaxVariant = ajax.variants.find(value => value.id === variant.legacyResourceId);
       if (!ajaxVariant) { observations.push(inconclusive(variant.id, variant.legacyResourceId, 'variant_identity_mismatch')); continue; }
       const context = await browser.newContext({ serviceWorkers: 'block', permissions: [], acceptDownloads: false });
+      if (session) await seedStorefrontSession(context, target.url, session);
       await context.routeWebSocket('**', socket => socket.close());
       await context.route('**/*', async route => {
         let url: URL;

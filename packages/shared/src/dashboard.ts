@@ -189,6 +189,13 @@ export const dashboardConnectionSchema = z.object({
 }).strict();
 
 export const dashboardImportRequestSchema = z.object({ limit: z.number().int().min(1).max(250) }).strict();
+export const dashboardStorefrontAccessSchema = z.object({ status: z.enum(['stored', 'missing', 'unavailable']) }).strict();
+export const dashboardStorefrontAccessRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('save'), password: z.string().min(1).max(1024).refine(value => !/[\0\r\n]/.test(value)) }).strict(),
+  z.object({ action: z.literal('remove') }).strict(),
+]);
+export type DashboardStorefrontAccess = z.infer<typeof dashboardStorefrontAccessSchema>;
+export type DashboardStorefrontAccessRequest = z.infer<typeof dashboardStorefrontAccessRequestSchema>;
 export const dashboardMonitoringRequestSchema = z.object({ productId: shopifyProductGidSchema, action: z.enum(['add', 'remove']) }).strict();
 export const dashboardScanRequestSchema = z.object({ productId: shopifyProductGidSchema }).strict();
 export const dashboardApplyRequestSchema = z.object({ confirmation: z.string().min(1).max(200), acknowledgeWarnings: z.boolean().default(false) }).strict();
@@ -213,7 +220,7 @@ export const dashboardErrorCodeSchema = z.enum([
   'invalid_host', 'invalid_origin', 'invalid_request', 'invalid_identifier', 'unsupported_media_type',
   'body_too_large', 'not_found', 'method_not_allowed', 'operation_in_progress', 'conflict',
   'confirmation_mismatch', 'warning_acknowledgement_required', 'write_scope_required',
-  'unprocessable', 'artifact_integrity_failed', 'dashboard_unavailable',
+  'unprocessable', 'artifact_integrity_failed', 'dashboard_unavailable', 'storefront_auth_failed',
 ]);
 export const dashboardErrorSchema = z.object({ error: dashboardErrorCodeSchema }).strict();
 

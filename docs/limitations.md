@@ -24,6 +24,12 @@ support.
 
 - A normal browser scan infers shopper availability from the exact selected variant
   and one visible add control; it does not submit the cart.
+- Password-protected stores can be scanned after configuring **Connection →
+  Storefront access**. This supports the configured `*.myshopify.com` hostname,
+  Shopify's development-store CSRF form and standard theme password form. It does
+  not follow cross-domain authentication redirects, solve challenges, or use an
+  Admin/browser login session. The password is scoped separately from Admin tokens;
+  cookies stay in memory and authenticated evidence is not an anonymous-crawler verdict.
 - Cart submission requires `--cart-add`, an initially empty cart, an exact response,
   and cleanup verification. Failure to prove cleanup is inconclusive.
 - Checkout, accounts, orders, payments, third-party requests, WebSockets,

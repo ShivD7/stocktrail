@@ -49,12 +49,17 @@ function json(response, value, status = 200) {
 
 async function startSyntheticDashboard() {
   let applied = false;
+  let storefrontStatus = 'missing';
+  let releaseOverview;
+  const initialOverview = new Promise(resolveOverview => { releaseOverview = resolveOverview; });
+  let overviewRequests = 0;
   const requests = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     requests.push(url.pathname);
     if (url.pathname === '/api/overview') {
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 400));
+      // Hold the first response until loading-state assertions finish, even on busy CI hosts.
+      if (overviewRequests++ === 0) await initialOverview;
       return json(response, {
         shop: 'example.myshopify.com', monitoredProducts: { selected: 1, active: 1, limit: 10 },
         incidents: { open: 1, resolved: 0, ignored: 0 },
@@ -63,6 +68,16 @@ async function startSyntheticDashboard() {
       });
     }
     if (url.pathname === '/api/products') return json(response, [product]);
+    if (url.pathname === '/api/storefront-access') {
+      if (request.method === 'POST') {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        const input = JSON.parse(body);
+        assert.ok(input.action === 'remove' || input.password === 'synthetic-storefront-password');
+        storefrontStatus = input.action === 'save' ? 'stored' : 'missing';
+      }
+      return json(response, { status: storefrontStatus });
+    }
     if (url.pathname === `/api/products/${encodeURIComponent(productId)}`) return json(response, { ...product, productUrl: 'https://example.invalid/products/synthetic', descriptionText: 'Synthetic', seo: { title: null, description: null }, readiness: null });
     if (url.pathname === '/api/incidents') return json(response, [incident]);
     if (url.pathname === '/api/connection') return json(response, {
@@ -106,7 +121,8 @@ async function startSyntheticDashboard() {
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
-    close: () => new Promise((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose())),
+    releaseOverview,
+    close: () => { releaseOverview(); return new Promise((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose())); },
   };
 }
 
@@ -146,6 +162,7 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     const reducedDuration = await loader.evaluate(element => getComputedStyle(element).animationDuration);
     const reducedDurationMs = reducedDuration.endsWith('ms') ? Number.parseFloat(reducedDuration) : Number.parseFloat(reducedDuration) * 1000;
     assert.ok(reducedDurationMs <= 0.01, `expected reduced animation duration, received ${reducedDuration}`);
+    synthetic.releaseOverview();
     await page.getByRole('heading', { name: 'Overview', level: 1 }).waitFor();
     assert.equal(await page.title(), 'Overview · StockTrail');
     const skipLink = page.getByRole('link', { name: 'Skip to content' });
@@ -164,6 +181,24 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
       }
     }
 
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await page.goto(`${synthetic.url}/#/connection`);
+    const passwordInput = page.getByLabel('Storefront password', { exact: true });
+    await passwordInput.waitFor();
+    assert.equal(await passwordInput.getAttribute('type'), 'password');
+    await passwordInput.fill('synthetic-storefront-password');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByRole('button', { name: 'Save storefront password', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    await page.getByRole('status').filter({ hasText: 'Storefront access saved.' }).waitFor();
+    assert.equal(await passwordInput.inputValue(), '');
+    assert.equal(await page.locator('body').innerText().then(text => text.includes('synthetic-storefront-password')), false);
+    await page.getByRole('button', { name: 'Remove storefront password', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'Saved storefront password removed.' }).waitFor();
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${width}px storefront access overflowed`);
+    }
     await page.setViewportSize({ width: 1024, height: 800 });
     await page.goto(`${synthetic.url}/#/proposals/${proposalId}`);
     const proposalHeading = page.getByRole('heading', { name: 'Improvement proposal', level: 1 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { isIP } from 'node:net';
+import { storefrontCookieHeader, type StorefrontSession } from './storefront-session.js';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import type {
   AjaxNormalizedProduct,
@@ -25,14 +26,16 @@ export type DerivedAjaxTarget = {
 
 export type ResolvedAddress = { address: string; family: 4 | 6 };
 
-type RawResponse = {
+export type RawResponse = {
   status: number;
   contentType: string | null;
   contentEncoding: string | null;
   body: Uint8Array;
+  location?: string;
+  setCookies?: string[];
 };
 
-type RawRequestResult =
+export type RawRequestResult =
   | { ok: true; response: RawResponse }
   | { ok: false; reasonCode: 'timeout' | 'transport_failure' | 'body_too_large' };
 
@@ -51,7 +54,7 @@ export type AjaxTransportDependencies = {
   request(
     target: DerivedAjaxTarget,
     address: ResolvedAddress,
-    context: { signal: AbortSignal; timeoutMs: number },
+    context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string },
   ): Promise<RawRequestResult>;
   observationTimeoutMs?: number;
   now?: () => number;
@@ -231,6 +234,7 @@ export function buildPinnedRequestOptions(target: DerivedAjaxTarget, address: Re
     headers: {
       Accept: 'application/json',
       'Accept-Encoding': 'identity',
+      'User-Agent': 'StockTrail/0.1 (+https://github.com/ShivD7/stocktrail)',
     },
   };
 }
@@ -238,7 +242,7 @@ export function buildPinnedRequestOptions(target: DerivedAjaxTarget, address: Re
 function defaultRequest(
   target: DerivedAjaxTarget,
   address: ResolvedAddress,
-  context: { signal: AbortSignal; timeoutMs: number },
+  context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string },
 ): Promise<RawRequestResult> {
   return new Promise(resolve => {
     let settled = false;
@@ -262,6 +266,16 @@ function defaultRequest(
     }
     context.signal.addEventListener('abort', onAbort, { once: true });
     const options = buildPinnedRequestOptions(target, address);
+    if (target.url.pathname === '/password') (options.headers as Record<string, string>).Accept = 'text/html';
+    if (context.cookie) (options.headers as Record<string, string>).Cookie = context.cookie;
+    if (context.formBody !== undefined) {
+      options.method = 'POST';
+      Object.assign(options.headers!, {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': String(Buffer.byteLength(context.formBody)),
+        Origin: target.url.origin,
+      });
+    }
     try {
       request = httpsRequest(target.url, options, response => {
         const chunks: Buffer[] = [];
@@ -289,6 +303,8 @@ function defaultRequest(
               contentType,
               contentEncoding,
               body: Buffer.concat(chunks),
+              location: response.headers.location,
+              setCookies: response.headers['set-cookie'],
             },
           });
         });
@@ -303,11 +319,11 @@ function defaultRequest(
       ok: false,
       reasonCode: context.signal.aborted ? 'timeout' : 'transport_failure',
     }));
-    request.end();
+    request.end(context.formBody);
   });
 }
 
-const defaultDependencies: AjaxTransportDependencies = {
+export const defaultAjaxTransportDependencies: AjaxTransportDependencies = {
   async resolve(hostname) {
     const results = await lookup(hostname, { all: true, verbatim: true });
     return results
@@ -348,7 +364,7 @@ function decodeBody(body: Uint8Array, encodingInput: string | null): { body?: Ui
 
 class ObservationDeadlineError extends Error {}
 
-function waitForObservation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+export function waitForObservation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new ObservationDeadlineError());
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
@@ -368,7 +384,11 @@ async function fetchPublicProduct(
   target: DerivedAjaxTarget,
   expected: 'json' | 'html',
   dependencies: AjaxTransportDependencies,
+  session?: StorefrontSession,
 ): Promise<AjaxFetchResult> {
+  let cookie: string | undefined;
+  try { cookie = session ? storefrontCookieHeader(session, target.url) : undefined; }
+  catch { return emptyFetchResult('storefront_origin_mismatch'); }
   const now = dependencies.now ?? Date.now;
   const timeoutMs = dependencies.observationTimeoutMs ?? OBSERVATION_TIMEOUT_MS;
   const startedAt = now();
@@ -401,7 +421,7 @@ async function fetchPublicProduct(
         Promise.resolve(dependencies.request(
           target,
           addresses[0]!,
-          { signal: controller.signal, timeoutMs: remainingMs },
+          { signal: controller.signal, timeoutMs: remainingMs, ...(cookie ? { cookie } : {}) },
         )),
         controller.signal,
       );
@@ -467,16 +487,18 @@ async function fetchPublicProduct(
 
 export function fetchAjaxProduct(
   target: DerivedAjaxTarget,
-  dependencies: AjaxTransportDependencies = defaultDependencies,
+  dependencies: AjaxTransportDependencies = defaultAjaxTransportDependencies,
+  session?: StorefrontSession,
 ): Promise<AjaxFetchResult> {
-  return fetchPublicProduct(target, 'json', dependencies);
+  return fetchPublicProduct(target, 'json', dependencies, session);
 }
 
 export function fetchHtmlProduct(
   target: DerivedAjaxTarget,
-  dependencies: AjaxTransportDependencies = defaultDependencies,
+  dependencies: AjaxTransportDependencies = defaultAjaxTransportDependencies,
+  session?: StorefrontSession,
 ): Promise<AjaxFetchResult> {
-  return fetchPublicProduct(target, 'html', dependencies);
+  return fetchPublicProduct(target, 'html', dependencies, session);
 }
 
 export function decodeHtmlBody(body: Uint8Array): string | null {

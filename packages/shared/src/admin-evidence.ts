@@ -53,6 +53,7 @@ export const adminEvidenceReportSchema = z.object({
     seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).optional(),
     status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED']),
     onlineStoreUrl: z.string().nullable(),
+    publishedAt: canonicalUtcTimestampSchema.nullable().optional(),
     updatedAt: canonicalUtcTimestampSchema,
     variants: z.array(adminVariantEvidenceSchema),
   }),

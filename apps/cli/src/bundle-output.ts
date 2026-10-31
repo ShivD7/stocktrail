@@ -17,6 +17,9 @@ export function formatEvidenceBundle(result: CombinedScanResult): string[] {
     `Search data JSON-LD: ${label(sources.jsonld.outcome, sources.jsonld.reasonCode)}; blocks: ${sources.jsonld.blockCount}; claims: ${sources.jsonld.itemCount}.`,
   ];
   if (browser !== null) lines.push(`Browser: ${label(browser.outcome, browser.reasonCode)}; variants: ${browser.itemCount}.`);
+  if (result.bundle.accessContext === 'password_authenticated') {
+    lines.push('Storefront context: password-authenticated session; anonymous visitor and crawler access was not verified.');
+  }
   lines.push(`Sources observed: ${observed}; inconclusive: ${all.length - observed}.`);
   if (result.evaluations !== undefined) {
     const counts = { pass: 0, fail: 0, inconclusive: 0, not_applicable: 0 };

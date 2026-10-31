@@ -3,6 +3,7 @@ import { lstat, rm } from 'node:fs/promises';
 import { parse, resolve } from 'node:path';
 import { readConfig, type Config } from './config.js';
 import { disconnect } from './auth.js';
+import { removeStorefrontPassword } from './storefront-access.js';
 
 const FILES = ['config.json', 'stocktrail.sqlite', 'stocktrail.sqlite-wal', 'stocktrail.sqlite-shm'] as const;
 const DIRECTORIES = ['artifacts', 'reports'] as const;
@@ -19,7 +20,11 @@ export type DataDeletionDependencies = {
 
 const defaultDependencies: DataDeletionDependencies = {
   readConfig,
-  deleteCredential: disconnect,
+  async deleteCredential(shop) {
+    const adminDeleted = await disconnect(shop);
+    const storefrontDeleted = await removeStorefrontPassword(shop);
+    return adminDeleted || storefrontDeleted;
+  },
 };
 
 function assertSafeRoot(directory: string): string {

@@ -4,6 +4,7 @@ import {
   assertShopifyProductGid,
   type AdminEvidenceReport,
 } from '../../shared/src/admin-evidence.js';
+import { canonicalUtcTimestampSchema } from '../../shared/src/catalog.js';
 import {
   ShopifyAdminClient,
   ShopifyResponseError,
@@ -12,6 +13,11 @@ import {
 
 const VARIANT_PAGE_SIZE = 100;
 const MAX_PAGE_REQUESTS = 1_000;
+
+// Shopify DateTime can omit milliseconds; evidence stores canonical UTC values.
+const shopifyTimestampSchema = z.string().datetime({ offset: true })
+  .transform(value => new Date(value).toISOString())
+  .pipe(canonicalUtcTimestampSchema);
 
 const pageInfoSchema = z.object({
   hasNextPage: z.boolean(),
@@ -26,11 +32,11 @@ const variantSchema = z.object({
   inventoryPolicy: z.enum(['DENY', 'CONTINUE']),
   inventoryQuantity: z.number().int().nullable(),
   sellableOnlineQuantity: z.number().int(),
-  updatedAt: z.string(),
+  updatedAt: shopifyTimestampSchema,
   inventoryItem: z.object({
     id: z.string().regex(/^gid:\/\/shopify\/InventoryItem\/\d+$/),
     tracked: z.boolean(),
-    updatedAt: z.string(),
+    updatedAt: shopifyTimestampSchema,
   }),
 });
 
@@ -42,7 +48,8 @@ const productSchema = z.object({
   seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).optional(),
   status: z.enum(['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED']),
   onlineStoreUrl: z.string().nullable(),
-  updatedAt: z.string(),
+  publishedAt: shopifyTimestampSchema.nullable().optional(),
+  updatedAt: shopifyTimestampSchema,
   variants: z.object({
     nodes: z.array(variantSchema),
     pageInfo: pageInfoSchema,
@@ -62,6 +69,7 @@ const adminEvidenceQuery = `#graphql
       seo { title description }
       status
       onlineStoreUrl
+      publishedAt
       updatedAt
       variants(first: $first, after: $after) {
         nodes {
@@ -99,6 +107,7 @@ function consistentProduct(first: ProductPage, next: ProductPage): boolean {
     first.descriptionHtml === next.descriptionHtml &&
     JSON.stringify(first.seo) === JSON.stringify(next.seo) &&
     first.onlineStoreUrl === next.onlineStoreUrl &&
+    first.publishedAt === next.publishedAt &&
     first.updatedAt === next.updatedAt;
 }
 
@@ -185,6 +194,7 @@ export async function readAdminProductEvidence(
       seo: firstProduct.seo,
       status: firstProduct.status,
       onlineStoreUrl: firstProduct.onlineStoreUrl,
+      publishedAt: firstProduct.publishedAt,
       updatedAt: firstProduct.updatedAt,
       variants,
     },

@@ -3,6 +3,7 @@ import { canonicalUtcTimestampSchema } from './catalog.js';
 import { shopifyProductGidSchema } from './admin-evidence.js';
 
 export const ajaxReasonCodeSchema = z.enum([
+  'storefront_origin_mismatch',
   'not_published_to_online_store',
   'invalid_online_store_url',
   'dns_resolution_failed',

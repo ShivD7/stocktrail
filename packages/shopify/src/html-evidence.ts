@@ -152,6 +152,55 @@ export function extractHtmlEvidence(html: string): HtmlExtraction {
   return { canonicalHref, blocks, reasonCode: null };
 }
 
+/** Parse sign-in fields as data; never execute password-page scripts or follow its URLs. */
+export function extractStorefrontPasswordForm(html: string, origin: string): { authenticityToken: string | null } | null {
+  let form: { valid: boolean; password: boolean; token: string | null; tokenCount: number } | null = null;
+  const matches: Array<{ authenticityToken: string | null }> = [];
+  let index = 0;
+  while (index < html.length) {
+    const start = html.indexOf('<', index);
+    if (start < 0) break;
+    if (html.startsWith('<!--', start)) {
+      const end = html.indexOf('-->', start + 4);
+      if (end < 0) return null;
+      index = end + 3; continue;
+    }
+    const tag = parseTag(html, start);
+    if (!tag) return null;
+    index = tag.end;
+    if (!tag.closing && tag.name === 'script') {
+      const close = findClosingScript(html, index);
+      if (!close) return null;
+      index = close.end; continue;
+    }
+    if (tag.name === 'form') {
+      if (tag.closing) {
+        if (form?.valid && form.password && form.tokenCount <= 1) matches.push({ authenticityToken: form.token });
+        form = null;
+      } else {
+        if (form) return null;
+        let valid = false;
+        try {
+          const action = new URL(tag.attributes.get('action') ?? '', origin);
+          valid = action.origin === origin && action.pathname === '/password' && !action.search && !action.hash &&
+            !action.username && !action.password && tag.attributes.get('method')?.toLowerCase() === 'post';
+        } catch { /* Refuse malformed form actions. */ }
+        form = { valid, password: false, token: null, tokenCount: 0 };
+      }
+    }
+    if (form && !tag.closing && tag.name === 'input') {
+      if (tag.attributes.get('name') === 'password' && tag.attributes.get('type')?.toLowerCase() === 'password') form.password = true;
+      if (tag.attributes.get('name') === 'authenticity_token') {
+        form.tokenCount += 1;
+        const value = tag.attributes.get('value') ?? '';
+        if (!/^[A-Za-z0-9+/_=-]{1,4096}$/.test(value)) return null;
+        form.token = value;
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

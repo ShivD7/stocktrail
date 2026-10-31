@@ -12,6 +12,45 @@ unassisted setup, and final demo assets remain pending release checks.
 
 Use Node.js 24 (or Node.js 22.13+) and npm.
 
+### Password-protected development stores
+
+Open **Connection → Storefront access** in the local dashboard and enter the
+storefront password from Shopify **Online Store → Preferences → Store access**.
+This is separate from your Shopify account password, Client secret, and Admin API
+token. The password is verified before being saved in a separate OS credential
+store entry. Use **Remove storefront password** to forget it, or use the CLI:
+
+```powershell
+npm start -- storefront-connect
+npm start -- storefront-logout
+```
+
+After saving access, monitor a published active product and click **Scan now**.
+Combined CLI scans, browser regression tests, incident reruns, and scheduled scans
+use the same saved access automatically. Admin-only and Ajax-only legacy commands
+retain their existing behavior; use a combined scan for authenticated collection.
+
+Shopify can return a null `onlineStoreUrl` for a published password-protected
+product. StockTrail derives its target only from fresh Admin `publishedAt`, active
+status, and a validated handle on the configured `*.myshopify.com` hostname. A null
+URL alone is no longer treated as proof that such a product is unpublished.
+
+Sign-in supports Shopify's development-store CSRF form and the standard
+`storefront_password` form. Only the fixed HTTPS `/password` endpoint receives
+the password. DNS validation, address pinning, TLS verification, body/time limits,
+exact-origin session scoping, and blocking checkout/account/payment and third-party
+browser traffic remain in place. Cross-domain redirects and challenges are not
+bypassed. Cookies exist only in memory for a scan and each variant still uses a
+fresh browser context. Passwords and cookies are not saved in evidence or logs.
+
+Authenticated evidence is labeled `password_authenticated` in the bundle and
+describes an unlocked session. It does not prove that anonymous shoppers or search
+crawlers can access the password-protected store. Incorrect passwords and missing
+access remain explicit inconclusive outcomes. `delete-data` also removes the saved
+storefront password.
+
+### Connect and scan
+
 ```powershell
 git clone https://github.com/ShivD7/stocktrail.git
 cd stocktrail

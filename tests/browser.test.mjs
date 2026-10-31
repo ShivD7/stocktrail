@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { chromium } from 'playwright';
+import { seedStorefrontSession } from '../dist/packages/shopify/src/storefront-session.js';
 import {
   collectBrowserEvidence,
   observeDawnVariant,
@@ -17,6 +18,34 @@ const ajaxVariant = {
   id: '701', available: true, inventoryManagement: 'shopify', requiresSellingPlan: false,
   sellingPlanAllocations: [],
 };
+
+test('authenticated Dawn observation receives only host-scoped cookies and a subsequent fresh context is anonymous', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const origin = 'https://synthetic.myshopify.com';
+  const session = { origin, cookies: [{ name: 'storefront_digest', value: 'synthetic-session' }] };
+  const target = new URL(`${origin}/products/synthetic`);
+  const requests = [];
+  try {
+    for (const authenticated of [true, false]) {
+      const context = await browser.newContext({ serviceWorkers: 'block' });
+      try {
+        if (authenticated) await seedStorefrontSession(context, target, session);
+        await context.route('**/*', async route => {
+          const cookie = await route.request().headerValue('cookie');
+          requests.push({ cookie, method: route.request().method() });
+          await route.fulfill({ contentType: 'text/html', body: '<form method="post" action="/cart/add"><input name="id" value="701" type="hidden"><button name="add" type="submit">Add to cart</button></form>' });
+        });
+        const observed = await observeDawnVariant(context, target, variant, ajaxVariant, false);
+        assert.equal(observed.outcome, 'observed');
+        const otherHost = await context.cookies('https://other.myshopify.com/');
+        assert.equal(otherHost.length, 0);
+      } finally { await context.close(); }
+    }
+    assert.equal(requests[0].cookie, 'storefront_digest=synthetic-session');
+    assert.equal(requests[1].cookie, null);
+    assert.equal(requests.every(request => request.method === 'GET'), true);
+  } finally { await browser.close(); }
+});
 
 async function withFixture(handler) {
   let cartItems = [];

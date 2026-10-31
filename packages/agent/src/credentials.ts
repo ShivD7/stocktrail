@@ -17,8 +17,8 @@ function keyringOptions(): EntryOptions | undefined {
     : undefined;
 }
 
-function entryFor(shop: string): AsyncEntry {
-  return new AsyncEntry(CREDENTIAL_SERVICE, normalizeShop(shop), keyringOptions());
+function entryFor(shop: string, service: string): AsyncEntry {
+  return new AsyncEntry(service, normalizeShop(shop), keyringOptions());
 }
 
 function credentialError(action: string): Error {
@@ -29,9 +29,11 @@ function credentialError(action: string): Error {
 }
 
 export class SystemCredentialStore implements CredentialStore {
+  constructor(private readonly service: string = CREDENTIAL_SERVICE) {}
+
   async getToken(shop: string): Promise<string | null> {
     try {
-      return await entryFor(shop).getPassword();
+      return await entryFor(shop, this.service).getPassword();
     } catch {
       throw credentialError('read');
     }
@@ -39,7 +41,7 @@ export class SystemCredentialStore implements CredentialStore {
 
   async setToken(shop: string, token: string): Promise<void> {
     try {
-      await entryFor(shop).setPassword(token);
+      await entryFor(shop, this.service).setPassword(token);
     } catch {
       throw credentialError('save');
     }
@@ -47,9 +49,14 @@ export class SystemCredentialStore implements CredentialStore {
 
   async deleteToken(shop: string): Promise<boolean> {
     try {
-      return await entryFor(shop).deletePassword();
+      return await entryFor(shop, this.service).deletePassword();
     } catch {
       throw credentialError('delete');
     }
   }
+}
+
+/** Separate from Admin tokens; never sent to the Admin API. */
+export class SystemStorefrontCredentialStore extends SystemCredentialStore {
+  constructor() { super('StockTrail Storefront Password'); }
 }

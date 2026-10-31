@@ -40,6 +40,8 @@ import {
 import { persistDiagnosticResults } from './diagnostic-results.js';
 import type { RuleEvaluation } from '../../shared/src/diagnostics.js';
 import type { ReadinessScore } from '../../shared/src/readiness.js';
+import { SystemStorefrontCredentialStore } from './credentials.js';
+import { authenticateStorefront, protectedProductUrl, type StorefrontSession } from '../../shopify/src/storefront-session.js';
 
 export type CombinedScanResult = {
   bundle: ProductEvidenceBundle;
@@ -64,9 +66,11 @@ export type CombinedScanDependencies = {
     productId: string,
     context?: { signal?: AbortSignal; onRequest?: () => void },
   ): Promise<AdminEvidenceReport>;
-  fetchAjax(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
-  fetchHtml(target: DerivedAjaxTarget): Promise<AjaxFetchResult>;
-  collectBrowser(admin: AdminEvidenceReport, ajax: AjaxNormalizedProduct, cartAuthorized: boolean): Promise<BrowserEvidence>;
+  readStorefrontPassword?(shop: string): Promise<string | null>;
+  authenticateStorefront?(shop: string, password: string): Promise<StorefrontSession>;
+  fetchAjax(target: DerivedAjaxTarget, session?: StorefrontSession): Promise<AjaxFetchResult>;
+  fetchHtml(target: DerivedAjaxTarget, session?: StorefrontSession): Promise<AjaxFetchResult>;
+  collectBrowser(admin: AdminEvidenceReport, ajax: AjaxNormalizedProduct, cartAuthorized: boolean, session?: StorefrontSession): Promise<BrowserEvidence>;
   persistDiagnostics(
     directory: string,
     shop: string,
@@ -133,9 +137,11 @@ const defaultDependencies: CombinedScanDependencies = {
     });
     return readAdminProductEvidence(client, productId, undefined, { signal: context?.signal });
   },
-  fetchAjax: fetchAjaxProduct,
-  fetchHtml: fetchHtmlProduct,
-  collectBrowser: collectBrowserEvidence,
+  readStorefrontPassword: shop => new SystemStorefrontCredentialStore().getToken(shop),
+  authenticateStorefront,
+  fetchAjax: (target, session) => fetchAjaxProduct(target, undefined, session),
+  fetchHtml: (target, session) => fetchHtmlProduct(target, undefined, session),
+  collectBrowser: (admin, ajax, cart, session) => collectBrowserEvidence(admin, ajax, cart, undefined, session),
   persistDiagnostics: persistDiagnosticResults,
   saveBundle: saveEvidenceBundle,
   now: () => new Date(),
@@ -244,6 +250,27 @@ export async function scanEvidenceBundle(
     onRequest: options.onAdminRequest,
   });
   const runId = dependencies.uuid();
+  const password = await dependencies.readStorefrontPassword?.(config.shop) ?? null;
+  let storefrontUrl = admin.product.onlineStoreUrl;
+  let session: StorefrontSession | undefined;
+  let accessReason: BundleReasonCode | null = null;
+  if (storefrontUrl === null && admin.product.publishedAt) {
+    storefrontUrl = password ? protectedProductUrl(config.shop, admin) : null;
+    accessReason = password ? 'online_store_url_unavailable' : 'storefront_password_required';
+  }
+  if (password && storefrontUrl !== null) {
+    try {
+      if (deriveHtmlProductTarget(storefrontUrl).url.origin !== `https://${config.shop}`) accessReason = 'storefront_origin_mismatch';
+      else {
+        try {
+          if (!dependencies.authenticateStorefront) throw new Error('No storefront authentication adapter.');
+          session = await dependencies.authenticateStorefront(config.shop, password);
+          accessReason = null;
+        } catch { accessReason = 'storefront_auth_failed'; }
+      }
+    } catch { accessReason = 'invalid_online_store_url'; }
+  }
+  const storefrontAdmin = { ...admin, product: { ...admin.product, onlineStoreUrl: storefrontUrl } };
   const inputs: BundleArtifactInput[] = [{
     source: 'admin', relativePath: 'admin.json', mediaType: 'application/json',
     contents: JSON.stringify(admin, null, 2) + '\n',
@@ -264,20 +291,22 @@ export async function scanEvidenceBundle(
   let validJsonLdBlocks = 0;
   let claims: ProductEvidenceBundle['sources']['jsonld']['claims'] = [];
 
-  if (admin.product.onlineStoreUrl === null) {
+  if (accessReason !== null) {
+    ajaxReason = htmlReason = jsonLdReason = accessReason;
+  } else if (storefrontUrl === null) {
     ajaxReason = htmlReason = jsonLdReason = 'not_published_to_online_store';
   } else {
     let ajaxTarget: DerivedAjaxTarget | null = null;
     let htmlTarget: DerivedAjaxTarget | null = null;
     try {
-      ajaxTarget = deriveAjaxProductTarget(admin.product.onlineStoreUrl);
-      htmlTarget = deriveHtmlProductTarget(admin.product.onlineStoreUrl);
+      ajaxTarget = deriveAjaxProductTarget(storefrontUrl);
+      htmlTarget = deriveHtmlProductTarget(storefrontUrl);
     } catch {
       ajaxReason = htmlReason = jsonLdReason = 'invalid_online_store_url';
     }
     if (ajaxTarget !== null && htmlTarget !== null) {
       [ajaxFetch, htmlFetch] = await Promise.all([
-        dependencies.fetchAjax(ajaxTarget), dependencies.fetchHtml(htmlTarget),
+        dependencies.fetchAjax(ajaxTarget, session), dependencies.fetchHtml(htmlTarget, session),
       ]);
       if (ajaxFetch.reasonCode !== null || ajaxFetch.body === null) {
         ajaxReason = reason(ajaxFetch.reasonCode ?? 'transport_failure');
@@ -329,10 +358,11 @@ export async function scanEvidenceBundle(
   let browserEvidence: BrowserEvidence | null = null;
   let browserReason: BundleReasonCode | null = null;
   if (options.browser) {
-    if (admin.product.onlineStoreUrl === null) browserReason = 'not_published_to_online_store';
+    if (accessReason !== null) browserReason = accessReason;
+    else if (storefrontUrl === null) browserReason = 'not_published_to_online_store';
     else if (ajaxProduct === null || ajaxReason !== null) browserReason = 'browser_prerequisite_unavailable';
     else {
-      browserEvidence = await dependencies.collectBrowser(admin, ajaxProduct, options.cartAdd === true);
+      browserEvidence = await dependencies.collectBrowser(storefrontAdmin, ajaxProduct, options.cartAdd === true, session);
       browserReason = reason(browserEvidence.reasonCode);
       inputs.push({ source: 'browser', relativePath: 'browser.json', mediaType: 'application/json', contents: JSON.stringify(browserEvidence, null, 2) + '\n' });
     }
@@ -372,19 +402,24 @@ export async function scanEvidenceBundle(
     schemaVersion: options.browser ? 2 : 1,
     runId,
     productId,
+    accessContext: session ? 'password_authenticated' : 'public',
     collectionStatus: [ajaxReason, htmlReason, jsonLdReason, ...(options.browser ? [browserReason] : [])].every(value => value === null) ? 'complete' : 'partial',
     observationWindow: window,
     sources,
     artifacts,
-    limitations: options.browser ? [
+    limitations: [...(session ? [
+      'Password-authenticated storefront evidence; this is not an anonymous visitor or search crawler verdict.',
+      'The product target may be derived from fresh Admin publication evidence and handle on the configured shop hostname.',
+    ] : []), ...(options.browser ? [
       'Dawn-compatible product forms, one storefront locale/market, and ordinary physical variants only.',
       'Browser verdicts describe this CLI host and observation window, not every shopper context.',
       'Checkout, account, payment, third-party requests, and persistent browser state are blocked.',
     ] : [
       'Collection-only evidence; no availability contradiction, score, incident, or remediation is asserted.',
-      'Public observations are cookieless requests from this CLI host and network context.',
+      session ? 'Observations use a temporary password-authenticated session from this CLI host.'
+        : 'Public observations are cookieless requests from this CLI host and network context.',
       'HTML is not rendered and scripts are never executed; JSON-LD is parsed as inline data only.',
-    ],
+    ])],
   });
   const saved = await dependencies.saveBundle(directory, config.shop, productId, runId, inputs, bundle);
   const adminRequestCount = admin.requestCount ?? admin.pageCount;

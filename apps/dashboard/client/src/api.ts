@@ -19,6 +19,7 @@ const errorMessages: Record<DashboardErrorCode, string> = {
   unprocessable: 'StockTrail could not safely complete this action.',
   artifact_integrity_failed: 'The saved local artifact failed its integrity check.',
   dashboard_unavailable: 'The local dashboard could not complete this request.',
+  storefront_auth_failed: 'Storefront sign-in failed. Check the storefront password and try again. Challenges and redirects to other hosts are not supported.',
 };
 
 export class DashboardApiError extends Error {

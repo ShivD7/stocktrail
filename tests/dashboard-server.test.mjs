@@ -116,6 +116,32 @@ test('authority validation accepts only the exact bound IPv4 authority', () => {
   ]) assert.equal(isExactDashboardAuthority(candidate, expected), false, candidate ?? 'null');
 });
 
+test('storefront access is origin-protected, schema-validated, and never returns the password', async () => {
+  const actions = [];
+  const server = await startDashboardServer(source({
+    async storefrontAccess() { return { status: 'missing' }; },
+    async setStorefrontAccess(input) { actions.push(input); return { status: input.action === 'save' ? 'stored' : 'missing' }; },
+  }), { port: 0 });
+  const password = 'synthetic-storefront-password';
+  try {
+    const status = await fetch(`${server.url}/api/storefront-access`);
+    assert.deepEqual(await status.json(), { status: 'missing' });
+    const denied = await post(server, '/api/storefront-access', { action: 'save', password }, { Origin: 'https://attacker.invalid' });
+    assert.equal(denied.status, 403);
+    for (const body of [{ action: 'save', password: '' }, { action: 'save', password, host: 'attacker.invalid' }, { action: 'remove', password }, { action: 'save', password: 'bad\r\nvalue' }]) {
+      assert.equal((await post(server, '/api/storefront-access', body)).status, 400);
+    }
+    assert.equal(actions.length, 0);
+    const saved = await post(server, '/api/storefront-access', { action: 'save', password });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await saved.json(), { status: 'stored' });
+    const removed = await post(server, '/api/storefront-access', { action: 'remove' });
+    assert.deepEqual(await removed.json(), { status: 'missing' });
+    assert.deepEqual(actions, [{ action: 'save', password }, { action: 'remove' }]);
+  } finally { await server.close(); }
+});
+
 test('dashboard server exposes every Phase 5 route with strict response and evidence handling', async () => {
   const server = await startDashboardServer(source(), { port: 0 });
   try {

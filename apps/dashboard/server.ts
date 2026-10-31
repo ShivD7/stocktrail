@@ -54,6 +54,12 @@ import {
   type DashboardActions,
 } from '../../packages/agent/src/dashboard-actions.js';
 import { SystemCredentialStore } from '../../packages/agent/src/credentials.js';
+import { storefrontAccessStatus, saveStorefrontPassword, removeStorefrontPassword } from '../../packages/agent/src/storefront-access.js';
+import { StorefrontAuthenticationError } from '../../packages/shopify/src/storefront-session.js';
+import {
+  dashboardStorefrontAccessSchema, dashboardStorefrontAccessRequestSchema,
+  type DashboardStorefrontAccess, type DashboardStorefrontAccessRequest,
+} from '../../packages/shared/src/dashboard.js';
 
 type EvidenceSourceName = 'admin' | 'ajax' | 'html' | 'jsonld' | 'browser';
 type EvidenceArtifactName = 'admin.json' | 'ajax.json' | 'html.html' | 'jsonld.json' | 'browser.json';
@@ -68,6 +74,8 @@ export type DashboardDataSource = {
   incidentEvidence(id: string, source: EvidenceSourceName): Promise<DashboardEvidence | null>;
   proposal(id: string): Promise<DashboardProposalDetail>;
   connection(): Promise<DashboardConnection>;
+  storefrontAccess(): Promise<DashboardStorefrontAccess>;
+  setStorefrontAccess(input: DashboardStorefrontAccessRequest): Promise<DashboardStorefrontAccess>;
   importCatalog(limit: number): Promise<DashboardImportResult>;
   monitoring(input: DashboardMonitoringRequest): Promise<DashboardMonitoringResult>;
   scan(productId: string): Promise<DashboardScanResult>;
@@ -214,6 +222,18 @@ export function createDashboardDataSource(directory: string, shop: string | null
         });
       } finally { repository.close(); }
     },
+    storefrontAccess: () => shop ? storefrontAccessStatus(shop) : Promise.resolve({ status: 'missing' }),
+    async setStorefrontAccess(input) {
+      if (!shop) throw new DashboardActionError('unprocessable', 422);
+      try {
+        if (input.action === 'save') await saveStorefrontPassword(shop, input.password);
+        else await removeStorefrontPassword(shop);
+      } catch (error) {
+        if (error instanceof StorefrontAuthenticationError) throw new DashboardActionError('storefront_auth_failed', 422);
+        throw error;
+      }
+      return storefrontAccessStatus(shop);
+    },
     importCatalog: limit => requireActions().importCatalog(limit),
     monitoring: input => requireActions().monitoring(input),
     scan: productId => requireActions().scan(productId),
@@ -347,6 +367,15 @@ async function routeRequest(
     active.add(key);
     try { return await task(); } finally { active.delete(key); }
   };
+
+  if (method === 'GET' && url.pathname === '/api/storefront-access') {
+    sendValidated(response, 200, dashboardStorefrontAccessSchema, await data.storefrontAccess()); return;
+  }
+  if (method === 'POST' && url.pathname === '/api/storefront-access') {
+    const body = await readJsonBody(request, dashboardStorefrontAccessRequestSchema);
+    sendValidated(response, 200, dashboardStorefrontAccessSchema,
+      await guarded('storefront-access', () => data.setStorefrontAccess(body))); return;
+  }
 
   if (method === 'GET' && !url.pathname.startsWith('/api/') && await sendStatic(response, url.pathname)) return;
   if (method === 'GET' && url.pathname === '/api/overview') {

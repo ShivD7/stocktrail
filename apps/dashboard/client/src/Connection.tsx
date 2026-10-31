@@ -1,8 +1,57 @@
 import { useEffect, useState } from 'react';
 import type { DashboardConnection } from '../../../../packages/shared/src/dashboard.js';
+import type { DashboardStorefrontAccess } from '../../../../packages/shared/src/dashboard.js';
+import { apiGet, apiPost, safeErrorMessage } from './api.js';
+import { ActionButton } from './ActionButton.js';
 
 function StateRow(props: { label: string; value: string; good?: boolean }) {
   return <div className="state-row"><span>{props.label}</span><strong className={props.good ? 'state-good' : undefined}>{props.value}</strong></div>;
+}
+
+function StorefrontAccess({ configured }: { configured: boolean }) {
+  const [status, setStatus] = useState<DashboardStorefrontAccess['status'] | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    void apiGet<DashboardStorefrontAccess>('/api/storefront-access', controller.signal)
+      .then(result => setStatus(result.status))
+      .catch(value => { if (value?.name !== 'AbortError') setError(safeErrorMessage(value)); });
+    return () => controller.abort();
+  }, []);
+  return <section className="panel connection-card" aria-labelledby="storefront-access-title">
+    <p className="eyebrow">Development stores</p>
+    <h2 id="storefront-access-title">Storefront access</h2>
+    <p>For a password-protected store, enter the storefront password from Shopify → Online Store → Preferences → Store access.</p>
+    <p>This is separate from your Shopify account password and API credentials.</p>
+    <StateRow label="Storefront password" value={status ?? 'Checking…'} good={status === 'stored'} />
+    <label className="search-field storefront-password-field" htmlFor="storefront-password">
+      <span>Storefront password</span>
+      <input id="storefront-password" type="password" autoComplete="off" maxLength={1024}
+        value={password} onChange={event => setPassword(event.target.value)}
+        disabled={!configured} aria-describedby="storefront-password-help" />
+    </label>
+    <p id="storefront-password-help" className="privacy-note">Saved in the operating system credential store. Temporary sign-in cookies are discarded after each scan. Authenticated results describe an unlocked session; visitors and search crawlers may still see the password page.</p>
+    <div className="storefront-access-actions">
+      <ActionButton<DashboardStorefrontAccess> label="Save storefront password" busyLabel="Verifying…"
+        disabled={!configured || !password || status === 'unavailable'}
+        action={async () => {
+          const submitted = password;
+          setPassword('');
+          setNotice('');
+          return apiPost('/api/storefront-access', { action: 'save', password: submitted });
+        }}
+        onSuccess={result => { setStatus(result.status); setError(''); }}
+        successMessage="Storefront access saved. Run Scan now on a monitored product." />
+      {status === 'stored' ? <ActionButton<DashboardStorefrontAccess>
+        label="Remove storefront password" busyLabel="Removing…"
+        action={() => apiPost('/api/storefront-access', { action: 'remove' })}
+        onSuccess={result => { setStatus(result.status); setNotice('Saved storefront password removed.'); }} /> : null}
+    </div>
+    {error ? <p role="alert">{error}</p> : null}
+    {notice ? <p role="status">{notice}</p> : null}
+  </section>;
 }
 
 export function Connection() {
@@ -53,6 +102,8 @@ export function Connection() {
               </div>
               <p className="monitoring-line"><strong>{data.monitoring.active} of {data.monitoring.limit}</strong> monitoring slots active</p>
             </section>
+
+            <StorefrontAccess configured={data.configuration === 'ready'} />
 
             <section className="panel connection-card data-card" aria-labelledby="local-data-title">
               <div>

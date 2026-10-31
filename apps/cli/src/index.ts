@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { dataDirectory, initialize, readConfig } from '../../../packages/agent/src/config.js';
 import { scanDemo } from '../../../packages/agent/src/demo.js';
 import { connect, disconnect } from '../../../packages/agent/src/auth.js';
+import { saveStorefrontPassword, removeStorefrontPassword } from '../../../packages/agent/src/storefront-access.js';
 import { persistCatalogImport, previewCatalogImport } from '../../../packages/agent/src/import.js';
 import { listMonitoringCandidates, updateMonitoringSelection } from '../../../packages/agent/src/monitoring.js';
 import { formatImportPreview, formatPersistentImport } from './import-output.js';
@@ -49,6 +50,8 @@ Usage: stocktrail <command> [options]
   init [--shop your-store.myshopify.com]  Create local configuration
   connect                               Verify and securely store a Shopify token
   login                                 Alias for connect
+  storefront-connect                    Verify and securely save a storefront password
+  storefront-logout                     Delete the saved storefront password
   logout                                Delete the stored Shopify token
   delete-data --confirm <shop>          Delete local data and the stored token
   doctor [--live]                       Check local setup and optional Shopify connection
@@ -90,7 +93,7 @@ Ajax evidence is a cookieless observation from this CLI host, not a universal sh
 Combined evidence without --browser remains collection-only.
 Browser scans use fresh isolated contexts. Cart submission requires --cart-add; checkout is always blocked.`;
 
-async function promptForToken(): Promise<string> {
+async function promptForToken(label = 'Shopify Admin API token: '): Promise<string> {
   const input = process.stdin;
   const output = process.stdout;
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
@@ -99,7 +102,7 @@ async function promptForToken(): Promise<string> {
 
   emitKeypressEvents(input);
   const wasRaw = input.isRaw;
-  output.write('Shopify Admin API token: ');
+  output.write(label);
   input.setRawMode(true);
   input.resume();
 
@@ -196,6 +199,21 @@ async function main() {
       const connection = await connect(config.shop, token);
       console.log(`Connected to ${connection.shopName} (${connection.shopDomain}).`);
       console.log('Token saved in the operating system credential store.');
+      return;
+    }
+    case 'storefront-connect': {
+      const config = await readConfig(directory);
+      if (!config.shop) throw new Error('No shop is configured.');
+      const password = await promptForToken('Storefront password: ');
+      await saveStorefrontPassword(config.shop, password);
+      console.log('Storefront password verified and saved in the operating system credential store.');
+      return;
+    }
+    case 'storefront-logout': {
+      const config = await readConfig(directory);
+      if (!config.shop) throw new Error('No shop is configured.');
+      await removeStorefrontPassword(config.shop);
+      console.log('Saved storefront password removed.');
       return;
     }
     case 'logout': {

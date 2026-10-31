@@ -6,6 +6,7 @@ export const bundleSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld', 'br
 export const bundleArtifactSourceSchema = z.enum(['admin', 'ajax', 'html', 'jsonld', 'browser', 'bundle']);
 export const bundleOutcomeSchema = z.enum(['observed', 'inconclusive']);
 export const bundleReasonCodeSchema = z.enum([
+  'storefront_password_required', 'storefront_auth_failed', 'storefront_origin_mismatch', 'online_store_url_unavailable',
   'not_published_to_online_store', 'invalid_online_store_url', 'dns_resolution_failed',
   'unsafe_network_address', 'redirect_observed', 'http_unauthorized', 'http_not_found',
   'http_status', 'timeout', 'transport_failure', 'body_too_large',
@@ -72,6 +73,7 @@ export const jsonLdClaimSchema = z.object({
 
 export const productEvidenceBundleV1Schema = z.object({
   schemaVersion: z.literal(1),
+  accessContext: z.enum(['public', 'password_authenticated']).optional(),
   runId: z.string().uuid(),
   productId: shopifyProductGidSchema,
   collectionStatus: z.enum(['complete', 'partial']),

@@ -94,6 +94,66 @@ test('reads complete Admin evidence with the bounded content fields required for
   assert.doesNotMatch(JSON.stringify(report), /request.?id|query.?cost|synthetic-credential/i);
 });
 
+test('accepts Shopify timestamps without milliseconds and normalizes all evidence timestamps', async () => {
+  const node = variant('1', {
+    updatedAt: '2026-10-15T10:00:00Z',
+    inventoryItem: {
+      id: 'gid://shopify/InventoryItem/1', tracked: true,
+      updatedAt: '2026-10-15T11:00:00+02:00',
+    },
+  });
+  const client = new ShopifyAdminClient(shop, credential, async () => response({
+    product: product([node], { hasNextPage: false, endCursor: null }, {
+      updatedAt: '2026-10-15T11:00:00Z',
+    }),
+  }));
+  const report = await readAdminProductEvidence(client, productId);
+  assert.equal(report.product.updatedAt, '2026-10-15T11:00:00.000Z');
+  assert.equal(report.product.variants[0].updatedAt, '2026-10-15T10:00:00.000Z');
+  assert.equal(report.product.variants[0].inventoryItem.updatedAt, '2026-10-15T09:00:00.000Z');
+});
+
+test('accepts equivalent timestamp representations across variant pages', async () => {
+  const pages = [
+    response({ product: product([variant('1')], { hasNextPage: true, endCursor: 'cursor-a' }, {
+      updatedAt: '2026-10-15T11:00:00Z',
+    }) }),
+    response({ product: product([variant('2')], { hasNextPage: false, endCursor: null }) }),
+  ];
+  const client = new ShopifyAdminClient(shop, credential, async () => pages.shift());
+  const report = await readAdminProductEvidence(client, productId);
+  assert.equal(report.product.variants.length, 2);
+  assert.equal(report.product.updatedAt, '2026-10-15T11:00:00.000Z');
+});
+
+test('records fresh Online Store publication evidence even when the public URL is null', async () => {
+  const client = new ShopifyAdminClient(shop, credential, async (_url, options) => {
+    assert.match(JSON.parse(options.body).query, /publishedAt/);
+    return response({ product: product([variant('1')], { hasNextPage: false, endCursor: null }, {
+      onlineStoreUrl: null, publishedAt: '2026-10-15T11:00:00Z',
+    }) });
+  });
+  const report = await readAdminProductEvidence(client, productId);
+  assert.equal(report.product.onlineStoreUrl, null);
+  assert.equal(report.product.publishedAt, '2026-10-15T11:00:00.000Z');
+});
+
+test('rejects invalid or timezone-free Shopify timestamps without revealing response values', async () => {
+  for (const invalid of ['2026-02-30T11:00:00Z', '2026-10-15T11:00:00', 'private invalid timestamp', '', null]) {
+    for (const field of ['product', 'variant', 'inventoryItem']) {
+      const node = variant('1');
+      const value = product([node], { hasNextPage: false, endCursor: null });
+      if (field === 'product') value.updatedAt = invalid;
+      else if (field === 'variant') node.updatedAt = invalid;
+      else node.inventoryItem.updatedAt = invalid;
+      const client = new ShopifyAdminClient(shop, credential, async () => response({ product: value }));
+      await assert.rejects(() => readAdminProductEvidence(client, productId), {
+        name: 'Error', message: 'Shopify returned a malformed Admin evidence response.',
+      });
+    }
+  }
+});
+
 test('paginates variants at 100 and preserves consistent product evidence', async () => {
   const pages = [
     response({ product: product([variant('1')], { hasNextPage: true, endCursor: 'cursor-a' }) }),

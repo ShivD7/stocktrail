@@ -194,7 +194,10 @@ test('pins lookup and sends only minimal cookieless GET headers', () => {
   const options = buildPinnedRequestOptions(target, address);
   assert.equal(options.method, 'GET');
   assert.equal(options.servername, 'store.example');
-  assert.deepEqual(options.headers, { Accept: 'application/json', 'Accept-Encoding': 'identity' });
+  assert.deepEqual(options.headers, {
+    Accept: 'application/json', 'Accept-Encoding': 'identity',
+    'User-Agent': 'StockTrail/0.1 (+https://github.com/ShivD7/stocktrail)',
+  });
   assert.doesNotMatch(JSON.stringify(options.headers), /authorization|cookie|shopify|customer|referer/i);
   let result;
   createPinnedLookup('store.example', address)('store.example', {}, (...args) => { result = args; });

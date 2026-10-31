@@ -106,6 +106,53 @@ test('collects one observed four-source bundle with safe aggregate output', asyn
   assert.doesNotMatch(output, /gid:\/\/|synthetic-item|store\.example|701|10\.00|2026-|123e|unused|secret/i);
 });
 
+test('a published password-protected product uses scoped authentication without persisting secrets or an invented Admin URL', async () => {
+  const admin = adminReport(null);
+  admin.product.publishedAt = '2026-10-15T11:00:00.000Z';
+  const fixture = dependencies({ admin });
+  const session = { origin: `https://${shop}`, cookies: [{ name: 'synthetic', value: 'private-synthetic-session' }] };
+  fixture.value.readStorefrontPassword = async () => 'private-synthetic-password';
+  fixture.value.authenticateStorefront = async () => session;
+  for (const method of ['fetchAjax', 'fetchHtml']) {
+    const collect = fixture.value[method];
+    fixture.value[method] = async (target, access) => {
+      assert.equal(target.url.origin, session.origin);
+      assert.equal(access, session);
+      return collect();
+    };
+  }
+  const collect = fixture.value.collectBrowser;
+  fixture.value.collectBrowser = async (contextAdmin, ajax, cart, access) => {
+    assert.equal(contextAdmin.product.onlineStoreUrl, `${session.origin}/products/synthetic-item`);
+    assert.equal(access, session);
+    assert.equal(cart, false);
+    return collect();
+  };
+  const result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  assert.equal(result.bundle.collectionStatus, 'complete');
+  assert.equal(result.bundle.accessContext, 'password_authenticated');
+  assert.match(result.bundle.limitations.join(' '), /not an anonymous/);
+  const serialized = JSON.stringify(fixture.saved);
+  assert.doesNotMatch(serialized, /private-synthetic-(password|session)/);
+  assert.equal(JSON.parse(fixture.saved[0].inputs.find(value => value.source === 'admin').contents).product.onlineStoreUrl, null);
+});
+
+test('protected products clearly report missing or rejected passwords and unpublished products are never authenticated', async () => {
+  const admin = adminReport(null);
+  admin.product.publishedAt = '2026-10-15T11:00:00.000Z';
+  let fixture = dependencies({ admin });
+  let result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  assert.equal(result.bundle.sources.html.reasonCode, 'storefront_password_required');
+  fixture.value.readStorefrontPassword = async () => 'synthetic';
+  fixture.value.authenticateStorefront = async () => { throw new Error('private authentication error'); };
+  result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  assert.equal(result.bundle.sources.browser.reasonCode, 'storefront_auth_failed');
+  assert.equal(fixture.calls.includes('html'), false);
+  admin.product.publishedAt = null;
+  result = await scanEvidenceBundle('unused', productId, fixture.value, { browser: true });
+  assert.equal(result.bundle.sources.html.reasonCode, 'not_published_to_online_store');
+});
+
 test('unpublished Admin evidence makes every public source inconclusive without public requests', async () => {
   const fixture = dependencies({ admin: adminReport(null) });
   const result = await scanEvidenceBundle('unused', productId, fixture.value);

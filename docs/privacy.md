@@ -9,6 +9,14 @@ the StockTrail data directory as private merchant data.
 The default data directory is `.stocktrail` beneath the current working directory.
 `STOCKTRAIL_HOME` can point to another absolute location.
 
+Storefront passwords are stored under the separate `StockTrail Storefront Password`
+OS credential-store service, keyed by the exact configured shop. They are verified
+through a bounded pinned HTTPS request to that shop's `/password` endpoint and never
+sent to Admin APIs. Temporary session/CSRF cookies are host-only in memory; no
+password, cookie, or password-page HTML is added to scan artifacts or logs. The
+Connection API returns only `stored`, `missing`, or `unavailable`, never credentials.
+Remove this credential in Connection, with `storefront-logout`, or with `delete-data`.
+
 | Location | Contents |
 | --- | --- |
 | `config.json` | Configuration version and the normalized `*.myshopify.com` domain. No token. |
