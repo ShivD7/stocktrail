@@ -39,6 +39,7 @@ a { color: inherit; }
 
 main { min-width: 0; padding: clamp(2rem, 5vw, 5rem); }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; margin-bottom: 2.5rem; }
+.page-heading > div { min-width: 0; }
 .page-heading h1, .centered-state h1 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 6vw, 5.6rem); font-weight: 500; letter-spacing: -0.055em; line-height: 0.95; }
 .eyebrow { margin: 0 0 0.85rem; color: #397454; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
 .page-intro { max-width: 38rem; margin: 1.25rem 0 0; color: var(--muted); font-size: 1.05rem; line-height: 1.65; }
@@ -333,10 +334,15 @@ td span:not(.severity):not(.incident-status), td small { margin-top: .25rem; col
 .storefront-password-field { display: grid; gap: .5rem; margin: 1rem 0; }
 .storefront-password-field input { width: 100%; min-width: 0; }
 .storefront-access-actions { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
-.storefront-access-actions .action-control { justify-items: start; }
-.storefront-access-actions .action-message { text-align: left; }
+.storefront-access-actions .action-control { justify-items: start; min-width: 0; max-width: 100%; }
+.connection-layout > .connection-card { min-width: 0; }
+.storefront-access-actions { min-width: 0; }
+.storefront-access-actions .action-control { flex: 1 1 12rem; }
+.storefront-access-actions .action-message { text-align: left; max-width: min(20rem, 100%); overflow-wrap: anywhere; }
+.storefront-access-actions button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 
 @media (max-width: 390px) {
+  .page-heading h1 { font-size: 2.4rem; overflow-wrap: anywhere; }
   .sidebar nav a { padding-inline: .2rem; font-size: .72rem; }
   .score-band { grid-template-columns: 1fr; }
   .inventory-summary strong { font-size: 1.25rem; }

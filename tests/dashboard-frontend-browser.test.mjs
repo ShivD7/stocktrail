@@ -73,6 +73,9 @@ async function startSyntheticDashboard() {
         let body = '';
         for await (const chunk of request) body += chunk;
         const input = JSON.parse(body);
+        if (input.action === 'save' && input.password === 'synthetic-invalid-password') {
+          return json(response, { error: 'storefront_auth_failed', diagnostic: { stage: 'password_submission', status: 422 } }, 422);
+        }
         assert.ok(input.action === 'remove' || input.password === 'synthetic-storefront-password');
         storefrontStatus = input.action === 'save' ? 'stored' : 'missing';
       }
@@ -186,6 +189,19 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     const passwordInput = page.getByLabel('Storefront password', { exact: true });
     await passwordInput.waitFor();
     assert.equal(await passwordInput.getAttribute('type'), 'password');
+    await passwordInput.fill('synthetic-invalid-password');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.getByRole('alert').filter({ hasText: 'Shopify did not accept the sign-in submission.' }).waitFor();
+    assert.equal(await passwordInput.inputValue(), '');
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const layout = await page.evaluate(() => ({ width: window.innerWidth, scroll: document.documentElement.scrollWidth,
+        offenders: [...document.querySelectorAll('body *')].filter(element => element.getBoundingClientRect().right > window.innerWidth + 1)
+          .slice(0, 8).map(element => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right })),
+      }));
+      assert.ok(layout.scroll <= layout.width, `${width}px storefront error overflowed: ${JSON.stringify(layout)}`);
+    }
     await passwordInput.fill('synthetic-storefront-password');
     await page.keyboard.press('Tab');
     assert.equal(await page.getByRole('button', { name: 'Save storefront password', exact: true }).evaluate(element => element === document.activeElement), true);
@@ -197,7 +213,11 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     await page.getByRole('status').filter({ hasText: 'Saved storefront password removed.' }).waitFor();
     for (const width of [320, 1440]) {
       await page.setViewportSize({ width, height: 900 });
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${width}px storefront access overflowed`);
+      const layout = await page.evaluate(() => ({ width: window.innerWidth, scroll: document.documentElement.scrollWidth,
+        offenders: [...document.querySelectorAll('body *')].filter(element => element.getBoundingClientRect().right > window.innerWidth + 1)
+          .slice(0, 10).map(element => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right })),
+      }));
+      assert.ok(layout.scroll <= layout.width, `${width}px storefront access overflowed: ${JSON.stringify(layout)}`);
     }
     await page.setViewportSize({ width: 1024, height: 800 });
     await page.goto(`${synthetic.url}/#/proposals/${proposalId}`);
