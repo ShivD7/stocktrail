@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { isExactDashboardAuthority, startDashboardServer } from '../dist/apps/dashboard/server.js';
+import { DashboardActionError } from '../dist/packages/agent/src/dashboard-actions.js';
 
 const incidentId = '11111111-1111-4111-8111-111111111111';
 const runId = '22222222-2222-4222-8222-222222222222';
@@ -114,6 +115,21 @@ test('authority validation accepts only the exact bound IPv4 authority', () => {
     '127.0.0.1:4173 ', '[127.0.0.1]:4173', '[::1]:4173', '::1:4173',
     '127.0.0.1:4173, attacker.example', '127.0.0.1:http', '127.0.0.1:99999',
   ]) assert.equal(isExactDashboardAuthority(candidate, expected), false, candidate ?? 'null');
+});
+
+test('storefront failures return allowlisted diagnostics without response bodies or credentials', async () => {
+  const server = await startDashboardServer(source({
+    async setStorefrontAccess() {
+      throw new DashboardActionError('storefront_auth_failed', 422, { stage: 'password_submission', status: 422 });
+    },
+  }), { port: 0 });
+  try {
+    const response = await post(server, '/api/storefront-access', { action: 'save', password: 'synthetic-private-password' });
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), {
+      error: 'storefront_auth_failed', diagnostic: { stage: 'password_submission', status: 422 },
+    });
+  } finally { await server.close(); }
 });
 
 test('storefront access is origin-protected, schema-validated, and never returns the password', async () => {
