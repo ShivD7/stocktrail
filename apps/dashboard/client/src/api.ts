@@ -1,6 +1,7 @@
 import type { DashboardErrorCode } from '../../../../packages/shared/src/dashboard.js';
+import { storefrontAuthDiagnosticSchema } from '../../../../packages/shared/src/storefront-access.js';
 
-type DashboardErrorPayload = { error?: DashboardErrorCode };
+type DashboardErrorPayload = { error?: DashboardErrorCode; diagnostic?: unknown };
 
 const errorMessages: Record<DashboardErrorCode, string> = {
   invalid_host: 'The dashboard address is not valid. Reopen it from the local StockTrail command.',
@@ -34,6 +35,22 @@ async function decode<T>(response: Response): Promise<T> {
   let payload: DashboardErrorPayload = {};
   try { payload = await response.json() as DashboardErrorPayload; } catch { /* Redact raw server responses. */ }
   const code = payload.error && payload.error in errorMessages ? payload.error : 'unknown';
+  if (code === 'storefront_auth_failed') {
+    const diagnostic = storefrontAuthDiagnosticSchema.safeParse(payload.diagnostic);
+    if (diagnostic.success) {
+      const labels = {
+        network: 'StockTrail could not reach the storefront sign-in endpoint.',
+        timeout: 'Storefront sign-in timed out.',
+        password_page: 'Shopify did not serve the storefront password page.',
+        password_form: 'StockTrail could not recognize the storefront password form.',
+        password_submission: 'Shopify did not accept the sign-in submission. Check the storefront password.',
+        redirect: 'Shopify returned a sign-in redirect outside the supported storefront path.',
+        session: 'StockTrail could not verify an unlocked storefront session.',
+      };
+      const { stage, status } = diagnostic.data;
+      throw new DashboardApiError(code, `${labels[stage]}${status === null ? '' : ` (HTTP ${status})`}`);
+    }
+  }
   throw new DashboardApiError(code);
 }
 
