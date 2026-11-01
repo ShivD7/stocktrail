@@ -33,6 +33,7 @@ export type RawResponse = {
   body: Uint8Array;
   location?: string;
   setCookies?: string[];
+  challengeObserved?: boolean;
 };
 
 export type RawRequestResult =
@@ -54,7 +55,7 @@ export type AjaxTransportDependencies = {
   request(
     target: DerivedAjaxTarget,
     address: ResolvedAddress,
-    context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string },
+    context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string; accept?: 'text/html' | 'application/json' },
   ): Promise<RawRequestResult>;
   observationTimeoutMs?: number;
   now?: () => number;
@@ -242,7 +243,7 @@ export function buildPinnedRequestOptions(target: DerivedAjaxTarget, address: Re
 function defaultRequest(
   target: DerivedAjaxTarget,
   address: ResolvedAddress,
-  context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string },
+  context: { signal: AbortSignal; timeoutMs: number; cookie?: string; formBody?: string; accept?: 'text/html' | 'application/json' },
 ): Promise<RawRequestResult> {
   return new Promise(resolve => {
     let settled = false;
@@ -267,6 +268,7 @@ function defaultRequest(
     context.signal.addEventListener('abort', onAbort, { once: true });
     const options = buildPinnedRequestOptions(target, address);
     if (target.url.pathname === '/password') (options.headers as Record<string, string>).Accept = 'text/html';
+    if (context.accept) (options.headers as Record<string, string>).Accept = context.accept;
     if (context.cookie) (options.headers as Record<string, string>).Cookie = context.cookie;
     if (context.formBody !== undefined) {
       options.method = 'POST';
@@ -305,6 +307,7 @@ function defaultRequest(
               body: Buffer.concat(chunks),
               location: response.headers.location,
               setCookies: response.headers['set-cookie'],
+              challengeObserved: response.headers['cf-mitigated'] === 'challenge',
             },
           });
         });
@@ -341,7 +344,7 @@ function mediaType(value: string | null): string | null {
     : null;
 }
 
-function decodeBody(body: Uint8Array, encodingInput: string | null): { body?: Uint8Array; reasonCode?: AjaxReasonCode } {
+export function decodeBody(body: Uint8Array, encodingInput: string | null): { body?: Uint8Array; reasonCode?: AjaxReasonCode } {
   const encoding = encodingInput?.trim().toLowerCase() ?? 'identity';
   try {
     if (encoding === '' || encoding === 'identity') return { body };
@@ -421,7 +424,7 @@ async function fetchPublicProduct(
         Promise.resolve(dependencies.request(
           target,
           addresses[0]!,
-          { signal: controller.signal, timeoutMs: remainingMs, ...(cookie ? { cookie } : {}) },
+          { signal: controller.signal, timeoutMs: remainingMs, accept: expected === 'html' ? 'text/html' : 'application/json', ...(cookie ? { cookie } : {}) },
         )),
         controller.signal,
       );
@@ -451,7 +454,8 @@ async function fetchPublicProduct(
       return { ...emptyFetchResult('http_status'), status, contentType };
     }
     if (expected === 'json' &&
-        (contentType === null || !(contentType === 'application/json' || contentType.endsWith('+json')))) {
+        (contentType === null || !(contentType === 'application/json' || contentType.endsWith('+json') ||
+          (target.url.pathname.endsWith('.js') && ['text/javascript', 'application/javascript'].includes(contentType))))) {
       return { ...emptyFetchResult('non_json_content_type'), status, contentType };
     }
     if (expected === 'html' && contentType !== 'text/html') {
