@@ -4,9 +4,11 @@ import { normalizeShop } from '../../shared/src/shop.js';
 import type { AdminEvidenceReport } from '../../shared/src/admin-evidence.js';
 import {
   defaultAjaxTransportDependencies, isPublicNetworkAddress, waitForObservation,
-  deriveHtmlProductTarget, type AjaxTransportDependencies,
+  deriveHtmlProductTarget, decodeBody, type AjaxTransportDependencies,
 } from './ajax.js';
 import { extractStorefrontPasswordForm } from './html-evidence.js';
+import { createDeadlineSignal } from '../../shared/src/resilience.js';
+import type { StorefrontAuthDiagnostic } from '../../shared/src/storefront-access.js';
 
 /** Run-scoped, host-only authentication. Never serialize or persist this object. */
 export type StorefrontSession = {
@@ -15,7 +17,7 @@ export type StorefrontSession = {
 };
 
 export class StorefrontAuthenticationError extends Error {
-  constructor() {
+  constructor(readonly diagnostic: StorefrontAuthDiagnostic = { stage: 'session', status: null }) {
     super('Storefront sign-in failed. Check the storefront password in Connection. Challenges and redirects to other hosts are not supported.');
   }
 }
@@ -78,51 +80,81 @@ export async function authenticateStorefront(
   validateStorefrontPassword(password);
   const shop = normalizeShop(shopInput);
   const url = new URL(`https://${shop}/password`);
-  const signal = AbortSignal.timeout(dependencies.observationTimeoutMs ?? 15_000);
+  // Sign-in includes the password page, submission, and an unlocked-page verification.
+  const timeoutMs = dependencies.observationTimeoutMs ?? 45_000;
+  const timer = createDeadlineSignal(timeoutMs);
+  const { signal } = timer;
+  let diagnostic: StorefrontAuthDiagnostic = { stage: 'network', status: null };
   const now = dependencies.now ?? Date.now;
-  const deadline = now() + (dependencies.observationTimeoutMs ?? 15_000);
+  const deadline = now() + timeoutMs;
   try {
     const addresses = await waitForObservation(dependencies.resolve(shop, signal), signal);
     if (!addresses.length || addresses.some(address => isIP(address.address) !== address.family || !isPublicNetworkAddress(address.address))) {
-      throw new StorefrontAuthenticationError();
+      throw new StorefrontAuthenticationError(diagnostic);
     }
     const target = { url, handle: '', localePath: null };
     const page = await waitForObservation(dependencies.request(target, addresses[0]!, {
-      signal, timeoutMs: deadline - now(),
+      signal, timeoutMs: deadline - now(), accept: 'text/html',
     }), signal);
+    diagnostic = { stage: 'password_page', status: page.ok ? page.response.status : null };
     if (!page.ok || page.response.status !== 200 || page.response.body.length > 5 * 1024 * 1024 ||
-        !/^text\/html(?:;|$)/i.test(page.response.contentType ?? '')) throw new StorefrontAuthenticationError();
-    const form = extractStorefrontPasswordForm(new TextDecoder('utf-8', { fatal: true }).decode(page.response.body), url.origin);
-    if (!form) throw new StorefrontAuthenticationError();
+        page.response.challengeObserved ||
+        !/^text\/html(?:;|$)/i.test(page.response.contentType ?? '')) throw new StorefrontAuthenticationError(diagnostic);
+    diagnostic = { stage: 'password_form', status: page.response.status };
+    const passwordPage = decodeBody(page.response.body, page.response.contentEncoding);
+    if (!passwordPage.body) throw new StorefrontAuthenticationError(diagnostic);
+    const form = extractStorefrontPasswordForm(new TextDecoder('utf-8', { fatal: true }).decode(passwordPage.body), url.origin);
+    if (!form) throw new StorefrontAuthenticationError(diagnostic);
     const initialCookies = authCookies(page.response.setCookies ?? [], shop);
     const cookie = initialCookies.length ? storefrontCookieHeader({ origin: url.origin, cookies: initialCookies }, url) : undefined;
     const fields = new URLSearchParams({ form_type: 'storefront_password', utf8: '✓', password });
     if (form.authenticityToken) fields.set('authenticity_token', form.authenticityToken);
     const timeoutMs = deadline - now();
-    if (timeoutMs <= 0) throw new StorefrontAuthenticationError();
+    if (timeoutMs <= 0) throw new StorefrontAuthenticationError({ stage: 'timeout', status: null });
+    diagnostic = { stage: 'password_submission', status: null };
     const result = await waitForObservation(dependencies.request(
       target, addresses[0]!, {
         signal, timeoutMs, ...(cookie ? { cookie } : {}), formBody: fields.toString(),
       },
     ), signal);
+    diagnostic = { stage: 'password_submission', status: result.ok ? result.response.status : null };
     if (!result.ok || ![302, 303].includes(result.response.status) || !result.response.location) {
-      throw new StorefrontAuthenticationError();
+      throw new StorefrontAuthenticationError(diagnostic);
     }
     const destination = new URL(result.response.location, url);
     if (destination.origin !== url.origin || destination.username || destination.password || destination.pathname !== '/') {
-      throw new StorefrontAuthenticationError();
+      throw new StorefrontAuthenticationError({ stage: 'redirect', status: result.response.status });
     }
-    // A successful redirect must issue a session cookie, not just echo the CSRF cookie.
-    if (!authCookies(result.response.setCookies ?? [], shop).length) throw new StorefrontAuthenticationError();
     const session = { origin: url.origin, cookies: authCookies([
       ...(page.response.setCookies ?? []), ...(result.response.setCookies ?? []),
     ], shop) };
     storefrontCookieHeader(session, url);
+    // Development stores can authenticate the existing session without Set-Cookie on POST.
+    // Prove access by reading the fixed shop root; never follow the redirect or save this HTML.
+    diagnostic = { stage: 'session', status: null };
+    const verification = await waitForObservation(dependencies.request(
+      { url: new URL('/', url), handle: '', localePath: null }, addresses[0]!, {
+        signal, timeoutMs: deadline - now(), accept: 'text/html', cookie: storefrontCookieHeader(session, url),
+      },
+    ), signal);
+    diagnostic = { stage: 'session', status: verification.ok ? verification.response.status : null };
+    if (!verification.ok || verification.response.status !== 200 ||
+        verification.response.challengeObserved ||
+        !/^text\/html(?:;|$)/i.test(verification.response.contentType ?? '') ||
+        verification.response.body.length > 5 * 1024 * 1024) throw new StorefrontAuthenticationError(diagnostic);
+    const verifiedBody = decodeBody(verification.response.body, verification.response.contentEncoding);
+    if (!verifiedBody.body) throw new StorefrontAuthenticationError(diagnostic);
+    const verifiedHtml = new TextDecoder('utf-8', { fatal: true }).decode(verifiedBody.body);
+    if (extractStorefrontPasswordForm(verifiedHtml, url.origin) ||
+        /<input\b[^>]*\btype\s*=\s*["']?password\b/i.test(verifiedHtml)) {
+      throw new StorefrontAuthenticationError(diagnostic);
+    }
     return session;
-  } catch {
+  } catch (error) {
     // Never reflect response bodies, headers, cookies, passwords or transport errors.
-    throw new StorefrontAuthenticationError();
-  }
+    if (error instanceof StorefrontAuthenticationError) throw error;
+    throw new StorefrontAuthenticationError(signal.aborted ? { stage: 'timeout', status: null } : diagnostic);
+  } finally { timer.dispose(); }
 }
 
 /** Null onlineStoreUrl alone cannot distinguish unpublished from password-protected. */
