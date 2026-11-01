@@ -277,6 +277,18 @@ test('rejects any unsafe DNS result and pins a validated public result', async (
   assert.deepEqual(pinned, { address: '8.8.8.8', family: 4 });
 });
 
+test('Shopify product .js responses accept JavaScript media types while parsing only JSON', async () => {
+  for (const contentType of ['text/javascript; charset=utf-8', 'application/javascript']) {
+    const result = await fetchAjaxProduct(deriveAjaxProductTarget(validUrl), {
+      async resolve() { return [{ address: '8.8.8.8', family: 4 }]; },
+      async request() { return rawResponse({ contentType, body: bytes('{"id":700,"handle":"synthetic-handle","variants":[]}') }); },
+    });
+    assert.equal(result.reasonCode, null);
+    assert.equal(normalizeAjaxProduct(result.body).ok, true);
+    assert.equal(normalizeAjaxProduct(bytes('window.synthetic = {"id":700}')).ok, false);
+  }
+});
+
 test('uses one total deadline across DNS and HTTPS and ignores late work', async () => {
   const target = deriveAjaxProductTarget(validUrl);
   let releaseDns;
