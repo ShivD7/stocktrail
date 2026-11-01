@@ -229,7 +229,7 @@ export function createDashboardDataSource(directory: string, shop: string | null
         if (input.action === 'save') await saveStorefrontPassword(shop, input.password);
         else await removeStorefrontPassword(shop);
       } catch (error) {
-        if (error instanceof StorefrontAuthenticationError) throw new DashboardActionError('storefront_auth_failed', 422);
+        if (error instanceof StorefrontAuthenticationError) throw new DashboardActionError('storefront_auth_failed', 422, error.diagnostic);
         throw error;
       }
       return storefrontAccessStatus(shop);
@@ -271,8 +271,8 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
   response.end(body);
 }
 
-function sendError(response: ServerResponse, status: number, code: DashboardErrorCode): void {
-  sendJson(response, status, dashboardErrorSchema.parse({ error: code }));
+function sendError(response: ServerResponse, status: number, code: DashboardErrorCode, diagnostic?: DashboardActionError['diagnostic']): void {
+  sendJson(response, status, dashboardErrorSchema.parse({ error: code, ...(diagnostic ? { diagnostic } : {}) }));
 }
 
 function sendValidated<T>(response: ServerResponse, status: number, schema: ZodType<T>, value: unknown): void {
@@ -490,7 +490,7 @@ export async function startDashboardServer(
   const server = createServer((request, response) => {
     void routeRequest(request, response, data, expectedAuthority, active).catch(error => {
       if (response.headersSent) { response.destroy(); return; }
-      if (error instanceof DashboardActionError) sendError(response, error.status, error.code);
+      if (error instanceof DashboardActionError) sendError(response, error.status, error.code, error.diagnostic);
       else sendError(response, 500, 'dashboard_unavailable');
     });
   });

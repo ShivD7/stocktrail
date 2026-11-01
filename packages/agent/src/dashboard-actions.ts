@@ -24,6 +24,7 @@ import {
   type DashboardScanResult,
 } from '../../shared/src/dashboard.js';
 import type { ProposalArtifact } from '../../shared/src/proposals.js';
+import type { StorefrontAuthDiagnostic } from '../../shared/src/storefront-access.js';
 import { createFieldDiffs } from '../../proposals/src/index.js';
 import { persistCatalogImport } from './import.js';
 import { updateMonitoringSelection } from './monitoring.js';
@@ -49,6 +50,7 @@ export class DashboardActionError extends Error {
   constructor(
     readonly code: DashboardErrorCode,
     readonly status: 400 | 403 | 404 | 409 | 422 | 500,
+    readonly diagnostic?: StorefrontAuthDiagnostic,
   ) {
     super(code);
   }
