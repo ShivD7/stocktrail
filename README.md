@@ -43,6 +43,12 @@ browser traffic remain in place. Cross-domain redirects and challenges are not
 bypassed. Cookies exist only in memory for a scan and each variant still uses a
 fresh browser context. Passwords and cookies are not saved in evidence or logs.
 
+Development stores may reuse the existing session without issuing a new cookie
+on password submission. StockTrail verifies access by reading the fixed shop root
+with the in-memory cookies and bounded HTML decompression before saving the
+password. Failure messages identify only the sign-in step and HTTP status;
+password-page content, CSRF tokens, and cookies are never included.
+
 Authenticated evidence is labeled `password_authenticated` in the bundle and
 describes an unlocked session. It does not prove that anonymous shoppers or search
 crawlers can access the password-protected store. Incorrect passwords and missing
