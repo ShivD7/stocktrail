@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { storefrontAuthDiagnosticSchema } from './storefront-access.js';
 import { shopifyProductGidSchema } from './admin-evidence.js';
 import { readinessScoreSchema } from './readiness.js';
 import {
@@ -222,7 +223,7 @@ export const dashboardErrorCodeSchema = z.enum([
   'confirmation_mismatch', 'warning_acknowledgement_required', 'write_scope_required',
   'unprocessable', 'artifact_integrity_failed', 'dashboard_unavailable', 'storefront_auth_failed',
 ]);
-export const dashboardErrorSchema = z.object({ error: dashboardErrorCodeSchema }).strict();
+export const dashboardErrorSchema = z.object({ error: dashboardErrorCodeSchema, diagnostic: storefrontAuthDiagnosticSchema.optional() }).strict();
 
 export type DashboardOverview = z.infer<typeof dashboardOverviewSchema>;
 export type DashboardProductSummary = z.infer<typeof dashboardProductSummarySchema>;
