@@ -40,7 +40,7 @@ export function Products({ onChanged }: { onChanged?: () => void }) {
   return (
     <>
       <section className="page-heading">
-        <div><p className="eyebrow">Catalog scope</p><h1>Products</h1><p className="page-intro">Choose what StockTrail monitors, scan current evidence, and prepare reviewable improvements.</p></div>
+        <div><h1>Products</h1><p className="page-intro">Choose what StockTrail monitors, scan current evidence, and prepare reviewable improvements.</p></div>
         <ActionButton<DashboardImportResult>
           label="Import catalog"
           busyLabel="Importing…"
@@ -66,7 +66,7 @@ export function Products({ onChanged }: { onChanged?: () => void }) {
                     <p>{product.variantCount} variant{product.variantCount === 1 ? '' : 's'} · {product.inventory.sellableVariants} sellable · {product.openIncidentCount} open incident{product.openIncidentCount === 1 ? '' : 's'}</p>
                     <p className="weakest">Weakest: {weakestLabel(product)}</p>
                   </div>
-                  <div className="product-score" aria-label={`Current readiness: ${scoreLabel(product.readinessScore)}`}><span>{product.readinessScore ?? '—'}</span><small>current</small></div>
+                  <div className="product-score" aria-label={`Current readiness: ${scoreLabel(product.readinessScore)}`}><span>{product.readinessScore ?? '—'}</span><small>{product.readinessScore === null ? 'Inconclusive' : 'out of 100'}</small></div>
                   <div className="row-actions">
                     {product.allowedActions.includes(product.monitored ? 'unmonitor' : 'monitor') ? <ActionButton<DashboardMonitoringResult>
                       label={product.monitored ? 'Remove monitoring' : 'Monitor'} busyLabel="Saving…"

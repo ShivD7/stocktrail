@@ -47,7 +47,7 @@ function json(response, value, status = 200) {
   response.end(JSON.stringify(value));
 }
 
-async function startSyntheticDashboard() {
+async function startSyntheticDashboard(extraIncidents = []) {
   let applied = false;
   let storefrontStatus = 'missing';
   let releaseOverview;
@@ -62,7 +62,7 @@ async function startSyntheticDashboard() {
       if (overviewRequests++ === 0) await initialOverview;
       return json(response, {
         shop: 'example.myshopify.com', monitoredProducts: { selected: 1, active: 1, limit: 10 },
-        incidents: { open: 1, resolved: 0, ignored: 0 },
+        incidents: { open: 1 + extraIncidents.length, resolved: 0, ignored: 0 },
         latestScan: { id: runId, productGid: productId, productTitle: product.title, status: 'complete', completedAt: timestamp, readinessScore: 70 },
         scoreDistribution: { buckets: [{ minimum: 0, maximum: 19, count: 0 }, { minimum: 20, maximum: 39, count: 0 }, { minimum: 40, maximum: 59, count: 0 }, { minimum: 60, maximum: 79, count: 1 }, { minimum: 80, maximum: 100, count: 0 }], inconclusive: 0 },
       });
@@ -82,7 +82,7 @@ async function startSyntheticDashboard() {
       return json(response, { status: storefrontStatus });
     }
     if (url.pathname === `/api/products/${encodeURIComponent(productId)}`) return json(response, { ...product, productUrl: 'https://example.invalid/products/synthetic', descriptionText: 'Synthetic', seo: { title: null, description: null }, readiness: null });
-    if (url.pathname === '/api/incidents') return json(response, [incident]);
+    if (url.pathname === '/api/incidents') return json(response, [incident, ...extraIncidents].filter(value => !url.searchParams.has('status') || value.status === url.searchParams.get('status')));
     if (url.pathname === '/api/connection') return json(response, {
       shop: 'example.myshopify.com', configuration: 'ready', credentialStorage: 'stored',
       catalog: { products: 1, variants: 1, imports: 1 }, monitoring: { selected: 1, active: 1, limit: 10 },
@@ -174,7 +174,7 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     assert.equal(await page.locator('#main-content').evaluate(element => element === document.activeElement), true);
     assert.equal(new URL(page.url()).hash, '#/');
 
-    for (const width of [320, 375, 1440]) {
+    for (const width of [320, 375, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: width < 500 ? 780 : 900 });
       for (const route of ['#/', '#/products', `#/products/${encodeURIComponent(productId)}`, '#/incidents', `#/incidents/${incidentId}`, `#/proposals/${proposalId}`, '#/connection']) {
         await page.goto(`${synthetic.url}/${route}`);
@@ -277,6 +277,62 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     assert.deepEqual(externalRequests, []);
   } finally {
     await context.close();
+    await browser.close();
+    await synthetic.close();
+  }
+});
+
+test('inventory triage preserves combined filters and sort through detail navigation', async testContext => {
+  const highId = '55555555-5555-4555-8555-555555555555';
+  const newestId = '66666666-6666-4666-8666-666666666666';
+  const synthetic = await startSyntheticDashboard([
+    { ...incident, id: highId, productTitle: 'Synthetic urgent finding', severity: 'high', firstSeenAt: '2026-10-15T12:00:00.000Z' },
+    { ...incident, id: newestId, productTitle: 'Synthetic newest finding', firstSeenAt: '2026-10-17T12:00:00.000Z' },
+  ]);
+  synthetic.releaseOverview();
+  const browser = await launchInstalledChromium(testContext);
+  if (!browser) { await synthetic.close(); return; }
+  const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+  try {
+    await page.goto(`${synthetic.url}/#/incidents`);
+    await page.getByRole('heading', { name: 'Inventory issues', exact: true }).waitFor();
+    const menu = page.getByRole('button', { name: 'Expand navigation', exact: true });
+    assert.equal(await menu.getAttribute('aria-expanded'), 'false');
+    await menu.focus();
+    await page.keyboard.press('Enter');
+    const overviewLink = page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Overview', exact: true });
+    await overviewLink.waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Overview');
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.getAttribute('aria-expanded'), 'false');
+    assert.equal(await menu.evaluate(element => element === document.activeElement), true);
+
+    const firstIssue = () => page.locator('tbody tr').first().getByRole('link');
+    await page.locator('tbody tr').first().waitFor();
+    assert.ok((await firstIssue().getAttribute('href')).endsWith(highId));
+    await page.getByLabel('Sort by', { exact: true }).selectOption('newest');
+    assert.ok((await firstIssue().getAttribute('href')).endsWith(newestId));
+    await page.getByLabel('Sort by', { exact: true }).selectOption('oldest');
+    assert.ok((await firstIssue().getAttribute('href')).endsWith(highId));
+    await page.getByLabel('Search incidents', { exact: true }).fill('deliberately');
+    await page.getByLabel('Status', { exact: true }).selectOption('open');
+    await page.getByLabel('Severity', { exact: true }).selectOption('medium');
+    await page.getByRole('status').filter({ hasText: '1 issue shown' }).waitFor();
+    await firstIssue().click();
+    await page.getByRole('heading', { name: 'Search data overpromises availability' }).waitFor();
+    await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Inventory issues' }).click();
+    await page.getByRole('status').filter({ hasText: '1 issue shown' }).waitFor();
+    assert.equal(await page.getByLabel('Search incidents', { exact: true }).inputValue(), 'deliberately');
+    assert.equal(await page.getByLabel('Status', { exact: true }).inputValue(), 'open');
+    assert.equal(await page.getByLabel('Severity', { exact: true }).inputValue(), 'medium');
+    assert.equal(await page.getByLabel('Sort by', { exact: true }).inputValue(), 'oldest');
+    await page.locator('.filters').getByRole('button', { name: 'Clear filters' }).click();
+    await page.getByRole('status').filter({ hasText: '3 issues shown' }).waitFor();
+    assert.equal(await page.getByLabel('Search incidents', { exact: true }).inputValue(), '');
+    assert.equal(await page.getByLabel('Sort by', { exact: true }).inputValue(), 'severity');
+    assert.ok((await firstIssue().getAttribute('href')).endsWith(highId));
+  } finally {
+    await page.close();
     await browser.close();
     await synthetic.close();
   }

@@ -3,6 +3,7 @@ import type { DashboardIncidentDetail } from '../../../../packages/shared/src/da
 import { ErrorState, LoadingState } from './ActionButton.js';
 import { apiGet } from './api.js';
 import { RerunButton } from './RerunButton.js';
+import { formatTimestamp } from './presentation.js';
 
 const explanations = {
   'ST-001': {
@@ -33,10 +34,6 @@ function Perspective(props: { label: string; perspective: DashboardIncidentDetai
   );
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-}
-
 export function IncidentDetailView({ incidentId }: { incidentId: string }) {
   const [detail, setDetail] = useState<DashboardIncidentDetail | null>(null);
   const [error, setError] = useState<'not-found' | 'unavailable' | null>(null);
@@ -64,12 +61,13 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
   const search = detail.comparison.find(value => value.perspective === 'search')!;
   return (
     <>
-      <nav className="breadcrumbs" aria-label="Breadcrumb"><a href="#/incidents">Incidents</a><span aria-hidden="true">/</span><span>{detail.ruleId}</span></nav>
+      <nav className="breadcrumbs" aria-label="Breadcrumb"><a href="#/incidents">Inventory issues</a><span aria-hidden="true">/</span><span>{detail.ruleId}</span></nav>
       <section className="detail-hero">
         <div>
           <div className="detail-kicker"><span className={`severity severity--${detail.severity}`}>{detail.severity}</span><span className={`incident-status incident-status--${detail.status}`}>{detail.status}</span></div>
           <h1>{explanation.title}</h1>
           <p>{detail.productTitle} <span aria-hidden="true">·</span> {detail.variantLabel}</p>
+          <p className="detail-metadata">Last checked <time dateTime={detail.lastEvaluatedAt}>{formatTimestamp(detail.lastEvaluatedAt)}</time><br /><code>{detail.variantGid}</code></p>
         </div>
         <div className="detail-actions">
           {detail.productUrl ? <a className="secondary-action" href={detail.productUrl} target="_blank" rel="noreferrer">Open product <span aria-hidden="true">↗</span></a> : null}
@@ -78,23 +76,22 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
       </section>
 
       <section aria-labelledby="comparison-title">
-        <div className="section-heading"><p className="eyebrow">The proof</p><h2 id="comparison-title">Three perspectives, one variant</h2></div>
+        <div className="section-heading"><h2 id="comparison-title">Three perspectives, one variant</h2></div>
         <div className="perspective-grid">
-          <Perspective label="Shopify truth" perspective={admin} description="Admin inventory, publication, tracking, and selling policy for the exact variant." />
+          <Perspective label="Shopify Admin" perspective={admin} description="Admin inventory, publication, tracking, and selling policy for the exact variant." />
           <Perspective label="Storefront behavior" perspective={storefront} description="What a shopper encounters after StockTrail selects this exact variant in a clean browser." />
           <Perspective label="Search data" perspective={search} description="The machine-readable availability claim exposed in the product page’s JSON-LD." />
         </div>
+        <p className="privacy-note">These are separate observations of the same variant. An inconclusive observation is not evidence of unavailable stock. View the saved evidence for the recorded values.</p>
       </section>
 
       <section className="detail-grid">
         <article className="panel cause-card">
-          <p className="eyebrow">Likely cause</p>
           <h2>Where the story breaks</h2>
           <p>{explanation.cause}</p>
           <div className="next-action"><strong>Suggested action</strong><span>{explanation.action}</span></div>
         </article>
         <article className="panel evidence-card">
-          <p className="eyebrow">Evidence bundle</p>
           <h2>Saved locally</h2>
           <ul>
             {detail.sources.filter(source => source.artifactPath).map(source => (
@@ -109,8 +106,8 @@ export function IncidentDetailView({ incidentId }: { incidentId: string }) {
       </section>
 
       <section className="panel history-card" aria-labelledby="history-title">
-        <div className="panel-heading"><div><p className="eyebrow">Regression trail</p><h2 id="history-title">Test history</h2></div><span className="muted">First seen {formatDate(detail.firstSeenAt)}</span></div>
-        {detail.testHistory.length ? <ol>{detail.testHistory.map(run => <li key={run.runId}><span className={`test-outcome test-outcome--${run.outcome}`}>{run.outcome}</span><span>{run.reasonCode.replaceAll('_', ' ')}</span><time dateTime={run.completedAt}>{formatDate(run.completedAt)}</time></li>)}</ol> : <p className="history-empty">No reruns yet. The incident’s stored assertion is ready to run.</p>}
+        <div className="panel-heading"><div><h2 id="history-title">Test history</h2></div><span className="muted">First seen <time dateTime={detail.firstSeenAt}>{formatTimestamp(detail.firstSeenAt)}</time></span></div>
+        {detail.testHistory.length ? <ol>{detail.testHistory.map(run => <li key={run.runId}><span className={`test-outcome test-outcome--${run.outcome}`}>{run.outcome}</span><span>{run.reasonCode.replaceAll('_', ' ')}</span><time dateTime={run.completedAt}>{formatTimestamp(run.completedAt)}</time></li>)}</ol> : <p className="history-empty">No reruns yet. The incident’s stored assertion is ready to run.</p>}
       </section>
     </>
   );

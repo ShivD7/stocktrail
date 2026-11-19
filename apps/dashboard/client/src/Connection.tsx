@@ -21,7 +21,6 @@ function StorefrontAccess({ configured }: { configured: boolean }) {
     return () => controller.abort();
   }, []);
   return <section className="panel connection-card" aria-labelledby="storefront-access-title">
-    <p className="eyebrow">Development stores</p>
     <h2 id="storefront-access-title">Storefront access</h2>
     <p>For a password-protected store, enter the storefront password from Shopify → Online Store → Preferences → Store access.</p>
     <p>This is separate from your Shopify account password and API credentials.</p>
@@ -57,8 +56,10 @@ function StorefrontAccess({ configured }: { configured: boolean }) {
 export function Connection() {
   const [data, setData] = useState<DashboardConnection | null>(null);
   const [error, setError] = useState(false);
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
+    setError(false);
     void fetch('/api/connection', { signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error('Connection data unavailable.');
@@ -67,22 +68,20 @@ export function Connection() {
       .then(setData)
       .catch(value => { if (value?.name !== 'AbortError') setError(true); });
     return () => controller.abort();
-  }, []);
+  }, [revision]);
 
   return (
     <>
       <section className="page-heading">
         <div>
-          <p className="eyebrow">Local setup</p>
-          <h1>Connection</h1>
+          <h1>Settings</h1>
           <p className="page-intro">Configuration and credentials remain on this machine. StockTrail reports state, never secret values.</p>
         </div>
       </section>
-      {error ? <div className="inline-state" role="alert"><strong>Connection status unavailable</strong><span>Restart the local dashboard and try again.</span></div>
+      {error ? <div className="inline-state inline-state--stack" role="alert"><strong>Connection status unavailable</strong><span>Check that the local dashboard is running, then try again.</span><button className="secondary-action" type="button" onClick={() => setRevision(value => value + 1)}>Try again</button></div>
         : !data ? <div className="inline-state" role="status"><span className="loader" aria-hidden="true" /><span>Checking local setup…</span></div>
           : <div className="connection-layout">
             <section className="panel connection-card" aria-labelledby="store-connection-title">
-              <p className="eyebrow">Shopify Admin</p>
               <h2 id="store-connection-title">Store connection</h2>
               <div className="state-list">
                 <StateRow label="Store" value={data.shop ?? 'Not configured'} good={data.configuration === 'ready'} />
@@ -93,7 +92,6 @@ export function Connection() {
             </section>
 
             <section className="panel connection-card" aria-labelledby="catalog-title">
-              <p className="eyebrow">Monitoring scope</p>
               <h2 id="catalog-title">Local catalog</h2>
               <div className="catalog-numbers">
                 <div><strong>{data.catalog.products}</strong><span>products</span></div>
@@ -107,7 +105,6 @@ export function Connection() {
 
             <section className="panel connection-card data-card" aria-labelledby="local-data-title">
               <div>
-                <p className="eyebrow">Privacy and retention</p>
                 <h2 id="local-data-title">Local evidence</h2>
                 <p>Evidence bundles and the SQLite index stay in StockTrail’s private application-data directory. Retention is manual in this release.</p>
               </div>
@@ -116,7 +113,7 @@ export function Connection() {
                 <div><strong>{data.localData.incidents}</strong><span>incidents</span></div>
                 <div><strong>{data.localData.testRuns}</strong><span>test runs</span></div>
               </div>
-              <p className="privacy-note">Automatic retention limits and local-data deletion are scheduled for Stage 6. No destructive control is exposed early.</p>
+              <p className="privacy-note">Automatic retention and local-data deletion controls are not available in this release.</p>
             </section>
           </div>}
     </>

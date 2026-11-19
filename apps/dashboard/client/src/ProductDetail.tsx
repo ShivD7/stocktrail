@@ -69,26 +69,26 @@ export function ProductDetail({ productId, onChanged }: { productId: string; onC
       </section>
 
       <section className="score-band" aria-label="Readiness summary">
-        <div className="score-card"><span>{product.readinessScore ?? '—'}</span><small>Current score</small></div>
+        <div className="score-card"><span>{product.readinessScore ?? '—'}</span><small>{product.readinessScore === null ? 'Inconclusive' : 'Current score / 100'}</small></div>
         <div className="inventory-summary"><div><strong>{product.inventory.sellableVariants}</strong><span>Sellable</span></div><div><strong>{product.inventory.unavailableVariants}</strong><span>Unavailable</span></div><div><strong>{product.inventory.unknownVariants}</strong><span>Unknown</span></div></div>
       </section>
 
       <section className="detail-grid product-detail-grid">
         <article className="panel">
-          <div className="panel-heading"><div><p className="eyebrow">Diagnostic score</p><h2>Readiness components</h2></div><span className="muted">Current evidence</span></div>
+          <div className="panel-heading"><div><h2>Readiness components</h2></div><span className="muted">Current evidence</span></div>
           {product.readiness ? <ul className="component-list">{product.readiness.components.map(component => (
             <li key={component.id}><div><strong>{componentLabels[component.id]}</strong><small>{component.reasonCodes.join(', ').replaceAll('_', ' ').toLocaleLowerCase()}</small></div><span className={`component-outcome component-outcome--${component.outcome}`}>{component.outcome.replace('_', ' ')}</span><b>{component.points === null ? '—' : `${component.points}/${component.weight}`}</b></li>
           ))}</ul> : <div className="empty-state compact-empty"><h3>No readiness score</h3><p>Run a scan to collect the five deterministic components.</p></div>}
           <p className="privacy-note">Diagnostic inventory-search readiness; not an SEO ranking claim.</p>
         </article>
         <aside className="panel product-copy-card">
-          <p className="eyebrow">Current product copy</p><h2>Content snapshot</h2>
+          <h2>Content snapshot</h2>
           <dl><div><dt>SEO title</dt><dd>{product.seo.title ?? 'Not set'}</dd></div><div><dt>SEO description</dt><dd>{product.seo.description ?? 'Not set'}</dd></div><div><dt>Description</dt><dd>{product.descriptionText || 'No description text'}</dd></div></dl>
         </aside>
       </section>
 
       <section className="panel proposal-callout" aria-labelledby="improve-title">
-        <div><p className="eyebrow">Safe content changes</p><h2 id="improve-title">Prepare an improvement</h2><p>StockTrail proposes reviewable text changes only. It never applies a proposal from this screen.</p></div>
+        <div><h2 id="improve-title">Prepare an improvement</h2><p>StockTrail proposes reviewable text changes only. It never applies a proposal from this screen.</p></div>
         {product.allowedActions.includes('improve') ? <ActionButton<DashboardImproveResult>
           label="Create proposal" busyLabel="Preparing…" className="primary-action"
           action={() => apiPost(`${productPath(productId)}/improve`, {})}

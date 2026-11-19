@@ -18,7 +18,7 @@ const warningLabels: Record<string, string> = {
 };
 
 function Score(props: { label: string; value: number | null; tone: 'current' | 'predicted' | 'verified' }) {
-  return <div className={`proposal-score proposal-score--${props.tone}`}><span>{props.value ?? '—'}</span><strong>{props.label}</strong><small>{props.value === null ? 'Inconclusive' : 'out of 100'}</small></div>;
+  return <div className={`proposal-score proposal-score--${props.value === null ? 'inconclusive' : props.tone}`}><span>{props.value ?? '—'}</span><strong>{props.label}</strong><small>{props.value === null ? 'Inconclusive' : 'out of 100'}</small></div>;
 }
 
 function Confirmation(props: {
@@ -48,6 +48,7 @@ function Confirmation(props: {
     document.body.style.overflow = 'hidden';
     const background = [
       document.querySelector<HTMLElement>('.sidebar'),
+      document.querySelector<HTMLElement>('.topbar'),
       ...Array.from(backdrop.parentElement?.children ?? []).filter(element => element !== backdrop),
     ].filter((element): element is HTMLElement => element instanceof HTMLElement);
     const priorInert = background.map(element => ({ element, value: element.hasAttribute('inert') }));
@@ -120,7 +121,7 @@ function Confirmation(props: {
   return (
     <div className="confirmation-backdrop">
       <section ref={dialog} className="confirmation" role="dialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description" tabIndex={-1} aria-busy={busy}>
-        <div className="confirmation-heading"><div><p className="eyebrow">Explicit confirmation</p><h2 id="confirmation-title">{props.verb === 'APPLY' ? 'Apply to Shopify' : 'Create a revert proposal'}</h2></div><button className="icon-button" type="button" onClick={props.onClose} aria-label="Close confirmation" disabled={busy}>×</button></div>
+        <div className="confirmation-heading"><div><h2 id="confirmation-title">{props.verb === 'APPLY' ? 'Apply to Shopify' : 'Create a revert proposal'}</h2></div><button className="icon-button" type="button" onClick={props.onClose} aria-label="Close confirmation" disabled={busy}>×</button></div>
         <p id="confirmation-description">{props.verb === 'APPLY' ? 'This is the only action on this page that writes product content. StockTrail will recheck the proposal and verify the result.' : 'This creates a new reviewable proposal. It does not change Shopify.'}</p>
         {!completed && hasWarnings ? <div className="warning-list" role="note"><strong>Risks to review</strong><ul>{props.proposal.validation.warningCodes.map(code => <li key={code}>{warningLabels[code] ?? code.replaceAll('_', ' ').toLocaleLowerCase()}</li>)}</ul></div> : null}
         {!completed ? <form onSubmit={event => void submit(event)}>
@@ -185,7 +186,7 @@ export function ProposalDetail({ proposalId, onChanged }: { proposalId: string; 
         <div><div className="detail-kicker"><span className={`state-pill state-pill--${proposal.validation.valid ? 'good' : 'bad'}`}>{proposal.validation.valid ? 'validated' : 'invalid'}</span><span className="state-pill">{proposal.kind}</span></div><h1>{proposal.kind === 'revert' ? 'Revert proposal' : 'Improvement proposal'}</h1><p>Status: <strong>{proposal.status.replace('_', ' ')}</strong> · Verification: <strong>{proposal.verificationStatus.replace('_', ' ')}</strong></p></div>
         <div className="detail-actions">
           {proposal.allowedActions.includes('reject') ? <ActionButton<DashboardProposalActionResult> label="Reject" busyLabel="Rejecting…" action={() => apiPost(`/api/proposals/${proposal.id}/reject`, {})} successMessage="Proposal rejected." onSuccess={refresh} /> : null}
-          {proposal.allowedActions.includes('reconcile') ? <ActionButton<DashboardProposalActionResult> label="Reconcile" busyLabel="Checking…" action={() => apiPost(`/api/proposals/${proposal.id}/reconcile`, {})} successMessage={result => `Reconciled: ${result.verificationStatus.replace('_', ' ')}.`} onSuccess={refresh} /> : null}
+          {proposal.allowedActions.includes('reconcile') ? <ActionButton<DashboardProposalActionResult> label="Check applied result" busyLabel="Checking…" action={() => apiPost(`/api/proposals/${proposal.id}/reconcile`, {})} successMessage={result => `Reconciled: ${result.verificationStatus.replace('_', ' ')}.`} onSuccess={refresh} /> : null}
           {proposal.allowedActions.includes('create_revert') ? <button className="secondary-action" type="button" onClick={event => openConfirmation('revert', event.currentTarget)}>Create revert</button> : null}
           {proposal.allowedActions.includes('apply') ? <button className="primary-action" type="button" onClick={event => openConfirmation('apply', event.currentTarget)}>Review and apply</button> : null}
         </div>
@@ -201,11 +202,14 @@ export function ProposalDetail({ proposalId, onChanged }: { proposalId: string; 
       {proposal.validation.warningCodes.length ? <div className="validation-message validation-message--warning" role="note"><strong>Review required</strong><ul>{proposal.validation.warningCodes.map(code => <li key={code}>{warningLabels[code] ?? code.replaceAll('_', ' ').toLocaleLowerCase()}</li>)}</ul></div> : null}
 
       <section aria-labelledby="changes-title">
-        <div className="section-heading"><p className="eyebrow">Inert text preview</p><h2 id="changes-title">Proposed changes</h2><p className="muted">Removed text is struck through; added text is underlined. HTML is displayed as text and never executed.</p></div>
+        <div className="section-heading"><h2 id="changes-title">Proposed changes</h2><p className="muted">Removed text is struck through; added text is underlined. HTML is displayed as text and never executed.</p></div>
         <div className="diff-list">{proposal.diffs.map(diff => (
           <article className="panel diff-card" key={diff.field}>
             <div className="panel-heading"><h3>{fieldLabels[diff.field]}</h3>{diff.truncated ? <span className="state-pill state-pill--muted">preview truncated</span> : null}</div>
+            <div className="change-comparison">{proposal.changes.filter(change => change.field === diff.field).map(change => <div className="change-columns" key={change.field}><div><h4>Current</h4><pre>{change.before ?? 'Not set'}</pre></div><div><h4>Proposed</h4><pre>{change.after ?? 'Not set'}</pre></div></div>)}</div>
+            <details className="diff-disclosure"><summary>View text diff</summary>
             <pre className="semantic-diff" aria-label={`${fieldLabels[diff.field]} text diff`}>{diff.parts.map((part, index) => part.kind === 'remove' ? <del key={index}>{part.value}</del> : part.kind === 'add' ? <ins key={index}>{part.value}</ins> : <span key={index}>{part.value}</span>)}</pre>
+            </details>
           </article>
         ))}</div>
       </section>
