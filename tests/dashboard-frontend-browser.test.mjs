@@ -67,8 +67,8 @@ async function startSyntheticDashboard() {
     if (url.pathname === '/api/incidents') return json(response, [incident]);
     if (url.pathname === '/api/connection') return json(response, {
       shop: 'example.myshopify.com', configuration: 'ready', credentialStorage: 'stored',
-      catalog: { products: 1, variants: 1, imports: 1 }, monitoring: { selected: 1, active: 1, limit: 10 },
-      localData: { evidenceRuns: 1, incidents: 1, testRuns: 1, retention: 'manual' },
+      catalog: { products: 1234567, variants: 1234567, imports: 1234567 }, monitoring: { selected: 1, active: 1, limit: 10 },
+      localData: { evidenceRuns: 1234567, incidents: 1234567, testRuns: 1234567, retention: 'manual' },
     });
     if (url.pathname === `/api/incidents/${incidentId}`) return json(response, {
       ...incident, productUrl: 'https://example.invalid/products/synthetic', latestEvidenceRunId: runId,
@@ -154,13 +154,22 @@ test('dashboard keyboard, dialog, inert preview, reduced motion, and responsive 
     assert.equal(await page.locator('#main-content').evaluate(element => element === document.activeElement), true);
     assert.equal(new URL(page.url()).hash, '#/');
 
-    for (const width of [320, 375, 1440]) {
+    for (const width of [320, 375, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: width < 500 ? 780 : 900 });
-      for (const route of ['#/', '#/products', `#/products/${encodeURIComponent(productId)}`, '#/incidents', `#/incidents/${incidentId}`, `#/proposals/${proposalId}`, '#/connection']) {
+      const routes = width === 768 || width === 1024 ? ['#/connection']
+        : ['#/', '#/products', `#/products/${encodeURIComponent(productId)}`, '#/incidents', `#/incidents/${incidentId}`, `#/proposals/${proposalId}`, '#/connection'];
+      for (const route of routes) {
         await page.goto(`${synthetic.url}/${route}`);
         await page.getByRole('heading', { level: 1 }).waitFor();
+        if (route === '#/connection') {
+          await page.getByRole('heading', { name: 'Local evidence', level: 2 }).waitFor();
+          assert.equal(await page.locator('.catalog-numbers strong, .data-counts strong').allTextContents()
+            .then(values => values.every(value => value === '1234567')), true);
+          assert.equal(await page.locator('.catalog-numbers > div, .data-counts > div').evaluateAll(cards => cards.every(card =>
+            card.scrollWidth <= card.clientWidth)), true, `${width}px connection counts overflowed their cards`);
+        }
         await page.waitForTimeout(25);
-        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${width}px ${route} overflowed horizontally`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `${width}px ${route} overflowed horizontally`);
       }
     }
 
